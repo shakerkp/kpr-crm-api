@@ -24,7 +24,7 @@ from typing import Optional, Any
 # ─────────────────────────────────────────────────────────────────
 # CONFIG  ← ఇక్కడ మాత్రమే Server IP మార్చాలి
 # ─────────────────────────────────────────────────────────────────
-SERVER_IP   = "192.168.1.10"    # ← Server PC IP (cmd → ipconfig → IPv4)
+SERVER_IP   = "192.168.0.25"    # ← Server PC IP (cmd → ipconfig → IPv4)
 SERVER_PORT = 8000
 BASE_URL    = f"http://{SERVER_IP}:{SERVER_PORT}"
 TIMEOUT     = 15

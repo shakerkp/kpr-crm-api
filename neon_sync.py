@@ -15,12 +15,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-NEON_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://neondb_owner:npg_t3Us4VicjbAe"
-    "@ep-square-hat-ao8gdlbd.c-2.ap-southeast-1.aws.neon.tech"
-    "/neondb?sslmode=require"
-)
+NEON_URL = "postgresql://neondb_owner:npg_t3Us4VicjbAe@ep-square-hat-ao8gdlbd.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
 
 # ── Background queue ──────────────────────────────────────────────────────────
 _q: queue.Queue = queue.Queue()

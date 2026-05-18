@@ -26,11 +26,7 @@ import argparse
 # ─────────────────────────────────────────────────────────────────────────────
 
 SQLITE_DB   = "kprlab.db"          # PC1 లో SQLite file path
-NEON_DB_URL = (
-    "postgresql://neondb_owner:npg_t3Us4VicjbAe"
-    "@ep-square-hat-ao8gdlbd.c-2.ap-southeast-1.aws.neon.tech"
-    "/neondb?sslmode=require"
-)
+NEON_DB_URL = "postgresql://neondb_owner:npg_t3Us4VicjbAe@ep-square-hat-ao8gdlbd.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
 SYNC_INTERVAL_SEC = 60             # ప్రతి 60 seconds కి sync
 STATE_FILE        = "sync_state.json"  # last sync timestamps save అవుతాయి
 
