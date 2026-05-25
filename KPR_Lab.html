@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>KPR Colour Lab — CRM</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#fafaf9;overflow:hidden}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:#e7e5e4;border-radius:10px}
+@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.fade{animation:fadeIn .25s ease}
+input:focus,select:focus,textarea:focus{outline:2px solid #ea580c!important;outline-offset:0}
+/* ── MOBILE RESPONSIVE ── */
+@media(max-width:768px){
+  body{overflow:auto!important}
+  .desk-only{display:none!important}
+  .mob-grid-1{grid-template-columns:1fr!important}
+  .mob-grid-2{grid-template-columns:1fr 1fr!important}
+  .mob-p{padding:12px 14px!important}
+  .mob-full{width:100%!important;max-width:100%!important}
+  .mob-stack{flex-direction:column!important;gap:8px!important}
+  .mob-scroll{overflow-x:auto!important;-webkit-overflow-scrolling:touch}
+  .mob-text-sm{font-size:11px!important}
+  .mob-hide{display:none!important}
+}
+</style>
+<link rel="manifest" href="data:application/json,{
+  &quot;name&quot;: &quot;KPR Colour Lab CRM&quot;,
+  &quot;short_name&quot;: &quot;KPR Lab&quot;,
+  &quot;start_url&quot;: &quot;/app&quot;,
+  &quot;display&quot;: &quot;standalone&quot;,
+  &quot;background_color&quot;: &quot;#fafaf9&quot;,
+  &quot;theme_color&quot;: &quot;#ea580c&quot;,
+  &quot;icons&quot;: [{&quot;src&quot;: &quot;https://img.icons8.com/color/96/camera.png&quot;, &quot;sizes&quot;: &quot;96x96&quot;, &quot;type&quot;: &quot;image/png&quot;}]
+}"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+<meta name="apple-mobile-web-app-title" content="KPR Lab"/>
+<meta name="theme-color" content="#ea580c"/>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useRef,useCallback}=React;
+
+/* ── BRAND ── */
+const B={pri:"#ea580c",priD:"#c2410c",priL:"#fff7ed",priM:"#fed7aa",
+  side:"#1c1917",sideA:"#292524",sideMut:"#78716c",sideTxt:"#e7e5e4"};
+
+/* ── API ── */
+function makeApi(base){
+  let tok=null;
+  const h=(auth=true)=>{const hd={"Content-Type":"application/json","Accept":"application/json"};if(auth&&tok)hd["Authorization"]=`Bearer ${tok}`;return hd;};
+  const req=async(method,path,body,auth=true)=>{
+    const r=await fetch(`${base}${path}`,{method,headers:h(auth),body:body?JSON.stringify(body):undefined});
+    const d=await r.json();if(!r.ok)throw new Error(d.detail||`HTTP ${r.status}`);return d;
+  };
+  return{
+    setToken:t=>{tok=t;},
+    health:()=>req("GET","/health",null,false),
+    login:(u,p)=>req("POST","/auth/login",{username:u,password:p},false),
+    logout:()=>req("POST","/auth/logout"),
+    summary:()=>req("GET","/dashboard/summary"),
+    customers:(s="",lim=200)=>req("GET",`/customers?limit=${lim}${s?`&search=${encodeURIComponent(s)}`:""}` ),
+    addCustomer:d=>req("POST","/customers",d),
+    updateCustomer:(id,d)=>req("PUT",`/customers/${id}`,d),
+    jobs:(p="")=>req("GET",`/jobs?${p}`),
+    addJob:d=>req("POST","/jobs",d),
+    updateJobStatus:(id,status,notes="")=>req("PATCH",`/jobs/${id}/status`,{status,notes}),
+    payments:(p="")=>req("GET",`/payments?${p}`),
+    addPayment:d=>req("POST","/payments",d),
+    jobTypes:()=>req("GET","/job-types"),
+    inventory:()=>req("GET","/inventory"),
+    lowStock:()=>req("GET","/inventory/low-stock"),
+    updateStock:(id,qc,notes="")=>req("PATCH",`/inventory/${id}/stock`,{quantity_change:qc,notes}),
+    dailyReport:date=>req("GET",`/admin/reports/daily${date?`?date=${date}`:""}` ),
+    activityLog:(lim=60)=>req("GET",`/admin/activity-log?limit=${lim}`),
+    staffList:()=>req("GET","/auth/staff"),
+    changePassword:(o,n)=>req("POST","/auth/change_password",{old_password:o,new_password:n}),
+    notifications:uid=>req("GET",`/notifications/${uid}`),
+    markAllRead:uid=>req("POST",`/notifications/mark_all_read/${uid}`),
+    inventoryItems:()=>req("GET","/inventory"),
+    activeJobs:(uid,role)=>req("GET",`/inventory/active_jobs${uid?`?user_id=${uid}&role=${role||""}`:""}` ),
+    addTransaction:d=>req("POST","/inventory/transaction",d),
+    myEntries:(uid,days=30)=>req("GET",`/inventory/my_entries/${uid}?days=${days}`),
+  };
+}
+
+/* ── UTILS ── */
+const fmt=n=>n==null?"—":`₹${Number(n).toLocaleString("en-IN",{maximumFractionDigits:0})}`;
+const TODAY=()=>new Date().toISOString().split("T")[0];
+const INI=name=>(name||"?").split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+
+/* ── SHARED UI ── */
+function Spin({s=13}){return<span style={{display:"inline-block",animation:"spin .8s linear infinite"}}><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></span>;}
+function Ico({d,s=16}){return<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{d}</svg>;}
+function Skel({w="100%",h=14,r=6}){return<div style={{width:w,height:h,borderRadius:r,background:"#f3f4f6",animation:"pulse 1.4s ease infinite"}}/>;}
+
+function Toast({msg,type,onDone}){
+  useEffect(()=>{const t=setTimeout(onDone,3200);return()=>clearTimeout(t);},[]);
+  const ok=type==="success";
+  return<div style={{position:"fixed",bottom:18,right:18,background:ok?"#f0fdf4":"#fef2f2",border:`1px solid ${ok?"#86efac":"#fca5a5"}`,borderRadius:10,padding:"11px 16px",display:"flex",gap:8,alignItems:"center",boxShadow:"0 4px 20px rgba(0,0,0,.12)",zIndex:9999,maxWidth:340,animation:"fadeIn .22s ease"}}>
+    <span style={{color:ok?"#15803d":"#dc2626",fontWeight:700,fontSize:15}}>{ok?"✓":"⚠"}</span>
+    <span style={{fontSize:12,color:ok?"#15803d":"#dc2626",fontWeight:600}}>{msg}</span>
+  </div>;
+}
+
+function Badge({status}){
+  const m={"Pending":["#fef3c7","#92400e","#fcd34d"],"In Progress":["#fff7ed","#9a3412","#fdba74"],"Completed":["#d1fae5","#065f46","#6ee7b7"],"Delivered":["#dbeafe","#1e3a8a","#93c5fd"],"Paid":["#d1fae5","#065f46","#6ee7b7"],"Partially Paid":["#fef3c7","#92400e","#fcd34d"],"Unpaid":["#fef2f2","#991b1b","#fca5a5"]};
+  const[bg,tc,bc]=m[status]||["#f3f4f6","#374151","#d1d5db"];
+  return<span style={{fontSize:9,fontWeight:800,padding:"2px 8px",borderRadius:20,background:bg,color:tc,border:`1px solid ${bc}`,whiteSpace:"nowrap"}}>{status}</span>;
+}
+
+function Modal({title,onClose,children,w=490}){
+  const isMob=window.innerWidth<=768;
+  return<div style={{position:"fixed",inset:0,background:"rgba(28,25,23,.55)",zIndex:800,display:"flex",alignItems:isMob?"flex-end":"center",justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+    <div style={{background:"#fff",borderRadius:isMob?"16px 16px 0 0":"14px",width:isMob?"100%":w,maxWidth:"100%",maxHeight:isMob?"92vh":"88vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,.2)",animation:"fadeIn .2s ease"}}>
+      <div style={{padding:"16px 18px 0",display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,position:"sticky",top:0,background:"#fff",zIndex:1,borderBottom:"1px solid #f5f5f4",paddingBottom:12}}>
+        <h3 style={{margin:0,fontSize:14,fontWeight:800,color:"#1c1917"}}>{title}</h3>
+        <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"#78716c",fontSize:24,lineHeight:1,padding:"0 4px",minWidth:36,minHeight:36,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+      </div>
+      <div style={{padding:"0 18px 24px"}}>{children}</div>
+    </div>
+  </div>;
+}
+
+const isMobile=()=>window.innerWidth<=768;
+const INP={width:"100%",padding:isMobile()?"11px 13px":"9px 11px",border:"1px solid #e7e5e4",borderRadius:8,fontSize:isMobile()?14:12,color:"#1c1917",boxSizing:"border-box",fontFamily:"inherit",background:"#fff"};
+const SEL={...INP,cursor:"pointer"};
+const BTN=(v="pri")=>({padding:"9px 16px",borderRadius:8,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",...(v==="pri"?{background:B.pri,color:"#fff"}:v==="ghost"?{background:"#f5f5f4",color:"#57534e",border:"1px solid #e7e5e4"}:{background:"#fef2f2",color:"#dc2626",border:"1px solid #fca5a5"})});
+
+function Fld({label,children,req}){return<div style={{marginBottom:11}}><label style={{fontSize:11,fontWeight:700,color:"#57534e",display:"block",marginBottom:4}}>{label}{req&&<span style={{color:B.pri,marginLeft:2}}>*</span>}</label>{children}</div>;}
+function SH({title,badge,action,al}){return<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:13}}><div style={{display:"flex",alignItems:"center",gap:7}}><h3 style={{fontSize:13,fontWeight:800,color:"#1c1917",margin:0}}>{title}</h3>{badge!=null&&<span style={{fontSize:9,fontWeight:800,background:B.priL,color:B.priD,border:`1px solid ${B.priM}`,borderRadius:20,padding:"1px 7px"}}>{badge}</span>}</div>{action&&<button onClick={action} style={{fontSize:11,color:B.pri,fontWeight:600,background:"none",border:`1px solid ${B.priM}`,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>{al||"Refresh"}</button>}</div>;}
+function Pg({children}){const isMob=window.innerWidth<=768;return<div className="fade" style={{padding:isMob?"12px 14px":"18px 22px",maxWidth:1080}}>{children}</div>;}
+function PageHdr({title,sub,action,actionLabel}){const isMob=window.innerWidth<=768;return<div style={{display:"flex",justifyContent:"space-between",alignItems:isMob?"flex-start":"center",marginBottom:16,gap:8,flexWrap:"wrap"}}><div><h2 style={{fontSize:isMob?16:19,fontWeight:800,color:"#1c1917",margin:0}}>{title}</h2>{sub&&<p style={{fontSize:10,color:"#78716c",margin:"2px 0 0"}}>{sub}</p>}</div>{action&&<button onClick={action} style={{...BTN(),display:"flex",alignItems:"center",gap:5,fontSize:isMob?11:12,padding:isMob?"8px 12px":"9px 16px",whiteSpace:"nowrap"}}>+ {actionLabel}</button>}</div>;}
+
+function Pager({page,total,per,onChange}){
+  const pages=Math.ceil(total/per);if(pages<=1)return null;
+  return<div style={{display:"flex",gap:4,justifyContent:"center",marginTop:14,alignItems:"center"}}>
+    <button disabled={page===0} onClick={()=>onChange(page-1)} style={{...BTN("ghost"),padding:"5px 10px",fontSize:11,opacity:page===0?.4:1}}>← Prev</button>
+    <span style={{fontSize:11,color:"#78716c",padding:"0 8px"}}>Page {page+1} / {pages}</span>
+    <button disabled={page>=pages-1} onClick={()=>onChange(page+1)} style={{...BTN("ghost"),padding:"5px 10px",fontSize:11,opacity:page>=pages-1?.4:1}}>Next →</button>
+  </div>;
+}
+
+function Spark({data,color="#ea580c",w=68,h=26}){
+  if(!data||data.length<2)return null;
+  const mx=Math.max(...data),mn=Math.min(...data),rng=mx-mn||1;
+  const pts=data.map((v,i)=>`${(i/(data.length-1))*w},${h-((v-mn)/rng)*(h-4)-2}`).join(" ");
+  return<svg width={w} height={h} style={{overflow:"visible"}}><polyline points={pts} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+}
+
+/* ── CONFIG MODAL ── */
+function CfgModal({ip,port,onSave,onClose}){
+  const[li,setLi]=useState(ip);const[lp,setLp]=useState(port);
+  return<div style={{position:"fixed",inset:0,background:"rgba(28,25,23,.6)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center"}}>
+    <div style={{background:"#fff",borderRadius:14,width:360,padding:"26px 28px",boxShadow:"0 20px 60px rgba(0,0,0,.2)",animation:"fadeIn .2s ease"}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+        <div style={{width:36,height:36,borderRadius:9,background:B.priL,display:"flex",alignItems:"center",justifyContent:"center",color:B.pri,fontSize:18}}>📡</div>
+        <div><div style={{fontSize:14,fontWeight:800,color:"#1c1917"}}>Server Connection</div><div style={{fontSize:11,color:"#78716c"}}>PC1 IP Address & Port</div></div>
+      </div>
+      <Fld label="Server URL / IP Address">
+        <input value={li} onChange={e=>setLi(e.target.value)} 
+          placeholder="192.168.0.25 లేదా https://your-app.onrender.com" style={INP}/>
+        <div style={{fontSize:10,color:"#78716c",marginTop:4}}>
+          LAN: 192.168.0.25 &nbsp;|&nbsp; Online: https://kpr-crm-api.onrender.com
+        </div>
+      </Fld>
+      {(!li.startsWith("http"))&&<Fld label="Port"><input value={lp} onChange={e=>setLp(e.target.value)} placeholder="8000" style={INP}/></Fld>}
+      <div style={{display:"flex",gap:8,marginTop:18}}>
+        <button onClick={onClose} style={{...BTN("ghost"),flex:1}}>Cancel</button>
+        <button onClick={()=>onSave(li,lp)} style={{...BTN(),flex:1}}>Save & Connect</button>
+      </div>
+    </div>
+  </div>;
+}
+
+/* ── LOGIN ── */
+function Login({onLogin,serverUrl,onConfig}){
+  const[user,setUser]=useState("");const[pass,setPass]=useState("");const[showP,setShowP]=useState(false);
+  const[loading,setLoading]=useState(false);const[err,setErr]=useState("");
+  const submit=async()=>{
+    if(!user||!pass){setErr("Username & Password enter చేయండి.");return;}
+    setLoading(true);setErr("");
+    try{const api=makeApi(serverUrl);const res=await api.login(user,pass);onLogin(res,api);}
+    catch(e){setErr(e.message||"Login failed.");setLoading(false);}
+  };
+  return<div style={{display:"flex",height:"100vh",alignItems:"center",justifyContent:"center",background:"#fafaf9",padding:"16px"}}>
+    <button onClick={onConfig} style={{position:"absolute",top:14,right:14,...BTN("ghost"),display:"flex",alignItems:"center",gap:5,fontSize:11}}>📡 Configure Server</button>
+    <div style={{width:"100%",maxWidth:390,animation:"fadeIn .4s ease"}}>
+      <div style={{background:"#fff",borderRadius:16,border:"1px solid #e7e5e4",padding:"36px 32px 32px",boxShadow:"0 8px 32px rgba(28,25,23,.07)"}}>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",marginBottom:26}}>
+          <div style={{width:62,height:62,borderRadius:16,background:`linear-gradient(135deg,${B.pri},${B.priD})`,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:14,boxShadow:`0 6px 20px ${B.pri}40`,fontSize:28}}>📷</div>
+          <div style={{fontSize:22,fontWeight:800,color:"#1c1917",letterSpacing:"-.3px"}}>KPR Colour Lab</div>
+          <div style={{fontSize:10,color:"#78716c",marginTop:3,letterSpacing:".06em",fontWeight:700}}>CRM MANAGEMENT SYSTEM</div>
+        </div>
+        {err&&<div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"9px 12px",fontSize:11,color:"#dc2626",marginBottom:13,fontWeight:600}}>⚠ {err}</div>}
+        <Fld label="Username" req><input value={user} onChange={e=>setUser(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="Enter username" style={INP} autoFocus/></Fld>
+        <Fld label="Password" req>
+          <div style={{position:"relative"}}>
+            <input value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} type={showP?"text":"password"} placeholder="Enter password" style={{...INP,paddingRight:34}}/>
+            <button onClick={()=>setShowP(v=>!v)} style={{position:"absolute",right:9,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"#a8a29e",fontSize:14}}>{showP?"🙈":"👁"}</button>
+          </div>
+        </Fld>
+        <button onClick={submit} disabled={loading} style={{...BTN(),width:"100%",marginTop:6,padding:"11px",fontSize:13}}>
+          {loading?<span style={{display:"inline-flex",alignItems:"center",gap:6}}><Spin/>Logging in...</span>:"Login to KPR Lab"}
+        </button>
+        <div style={{marginTop:13,padding:"8px 11px",background:"#fafaf9",borderRadius:7,border:"1px solid #f5f5f4",fontSize:10,color:"#78716c",textAlign:"center"}}>
+          {serverUrl.includes("render.com")?
+            <span style={{color:"#16a34a",fontWeight:700}}>🌍 Online Mode (Render)</span>:
+            <span style={{color:"#2563eb",fontWeight:700}}>🏠 LAN Mode</span>}
+          <br/><span style={{wordBreak:"break-all"}}>{serverUrl}</span>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+/* ── PIE CHART ── */
+function JobPie({jobs}){
+  const sl=[{l:"Pending",v:jobs.pending||0,c:"#f59e0b"},{l:"In Progress",v:jobs.in_progress||0,c:B.pri},{l:"Completed",v:jobs.completed||0,c:"#16a34a"}];
+  const total=sl.reduce((a,s)=>a+s.v,0)||1;let cum=-90;
+  const toR=d=>(d*Math.PI)/180;
+  const segs=sl.map(s=>{const ang=(s.v/total)*360,st=cum;cum+=ang;const r=40,cx=50,cy=50;const x1=cx+r*Math.cos(toR(st)),y1=cy+r*Math.sin(toR(st)),x2=cx+r*Math.cos(toR(cum)),y2=cy+r*Math.sin(toR(cum));return{...s,d:`M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${ang>180?1:0},1 ${x2},${y2} Z`};});
+  return<div style={{display:"flex",alignItems:"center",gap:14}}>
+    <svg viewBox="0 0 100 100" style={{width:88,height:88,flexShrink:0}}>
+      {segs.map((s,i)=><path key={i} d={s.d} fill={s.c} opacity=".9"/>)}
+      <circle cx="50" cy="50" r="22" fill="#fff"/>
+      <text x="50" y="47" textAnchor="middle" fontSize="11" fontWeight="700" fill="#1c1917">{total}</text>
+      <text x="50" y="57" textAnchor="middle" fontSize="7" fill="#78716c">Jobs</text>
+    </svg>
+    <div style={{flex:1}}>
+      {sl.map((s,i)=><div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:7}}>
+        <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:7,height:7,borderRadius:2,background:s.c}}/><span style={{fontSize:11,color:"#57534e"}}>{s.l}</span></div>
+        <div style={{display:"flex",gap:4}}><span style={{fontSize:11,fontWeight:800,color:"#1c1917"}}>{s.v}</span><span style={{fontSize:9,color:"#a8a29e"}}>{Math.round((s.v/total)*100)}%</span></div>
+      </div>)}
+    </div>
+  </div>;
+}
+
+
+/* ── SEARCHABLE CUSTOMER SELECT ── */
+function CustSearch({custs,value,onChange}){
+  const[q,setQ]=useState("");const[open,setOpen]=useState(false);const ref=useRef(null);
+  const sel=custs.find(c=>String(c.id)===String(value));
+  const filtered=custs.filter(c=>!q||c.name.toLowerCase().includes(q.toLowerCase())||c.mobile.includes(q)).slice(0,50);
+  useEffect(()=>{
+    const handler=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false);};
+    document.addEventListener("mousedown",handler);return()=>document.removeEventListener("mousedown",handler);
+  },[]);
+  return<div ref={ref} style={{position:"relative"}}>
+    <div onClick={()=>setOpen(v=>!v)} style={{...INP,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",userSelect:"none"}}>
+      {sel?<span style={{fontWeight:600,color:"#1c1917"}}>{sel.name} <span style={{color:"#78716c",fontWeight:400,fontSize:11}}>({sel.mobile})</span></span>
+          :<span style={{color:"#a8a29e"}}>-- Select Customer --</span>}
+      <span style={{color:"#78716c",fontSize:10}}>{open?"▲":"▼"}</span>
+    </div>
+    {open&&<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:999,background:"#fff",border:"1px solid #e7e5e4",borderRadius:8,boxShadow:"0 8px 24px rgba(0,0,0,.12)",marginTop:2,maxHeight:260,display:"flex",flexDirection:"column"}}>
+      <div style={{padding:"8px 10px",borderBottom:"1px solid #f5f5f4"}}>
+        <input autoFocus value={q} onChange={e=>setQ(e.target.value)}
+          placeholder="🔍 Name లేదా Mobile search..."
+          style={{...INP,padding:"8px 10px",fontSize:13,border:"1px solid #fed7aa"}}/>
+      </div>
+      <div style={{overflowY:"auto",flex:1}}>
+        <div onClick={()=>{onChange("");setQ("");setOpen(false);}}
+          style={{padding:"9px 12px",cursor:"pointer",color:"#a8a29e",fontSize:12,borderBottom:"1px solid #fafaf9"}}>
+          -- Select Customer --
+        </div>
+        {filtered.length===0&&<div style={{padding:"14px",textAlign:"center",color:"#a8a29e",fontSize:12}}>No results for "{q}"</div>}
+        {filtered.map(cu=><div key={cu.id}
+          onClick={()=>{onChange(String(cu.id));setQ("");setOpen(false);}}
+          style={{padding:"10px 12px",cursor:"pointer",background:String(cu.id)===String(value)?"#fff7ed":"#fff",borderBottom:"1px solid #fafaf9",display:"flex",justifyContent:"space-between",alignItems:"center"}}
+          onMouseEnter={e=>e.currentTarget.style.background="#fff7ed"}
+          onMouseLeave={e=>e.currentTarget.style.background=String(cu.id)===String(value)?"#fff7ed":"#fff"}>
+          <div>
+            <div style={{fontSize:13,fontWeight:600,color:"#1c1917"}}>{cu.name}</div>
+            <div style={{fontSize:11,color:"#78716c"}}>{cu.mobile}</div>
+          </div>
+          {String(cu.id)===String(value)&&<span style={{color:B.pri,fontWeight:800}}>✓</span>}
+        </div>)}
+      </div>
+    </div>}
+  </div>;
+}
+
+/* ═══════════════════════════════════════ DASHBOARD ═══ */
+function Dashboard({api,user,setNav,role}){
+  const[sum,setSum]=useState(null);const[jobs,setJobs]=useState([]);const[ls,setLs]=useState([]);
+  const[loading,setLoading]=useState(true);const[spinning,setSpinning]=useState(false);const[err,setErr]=useState("");
+  const[jf,setJf]=useState("All");const[js,setJs]=useState("");
+  const load=useCallback(async(silent=false)=>{if(!silent)setLoading(true);setSpinning(true);setErr("");
+    try{const[s,j,l]=await Promise.all([api.summary(),api.jobs("limit=20"),api.lowStock()]);setSum(s);setJobs(j);setLs(l);}
+    catch(e){setErr(e.message);}finally{setLoading(false);setSpinning(false);}
+  },[api]);
+  useEffect(()=>{load();const t=setInterval(()=>load(true),30000);return()=>clearInterval(t);},[load]);
+  const fj=jobs.filter(j=>(jf==="All"||j.status===jf)&&(!js||(j.customer_name||"").toLowerCase().includes(js.toLowerCase())||String(j.id).includes(js)));
+
+  return<Pg>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+      <div>
+        <h2 style={{fontSize:19,fontWeight:800,color:"#1c1917",margin:0}}>Dashboard</h2>
+        <p style={{fontSize:11,color:"#78716c",margin:"2px 0 0"}}>{new Date().toLocaleDateString("en-IN",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p>
+      </div>
+      <button onClick={()=>load()} style={{...BTN("ghost"),display:"flex",alignItems:"center",gap:5,padding:"7px 12px",fontSize:11}}>
+        <span style={{display:"inline-block",animation:spinning?"spin .8s linear infinite":"none",fontSize:12}}>↻</span> Refresh
+      </button>
+    </div>
+    {err&&<div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"9px 12px",fontSize:11,color:"#dc2626",marginBottom:13,fontWeight:600}}>⚠ {err}</div>}
+
+    {/* KPIs */}
+    <div style={{display:"grid",gridTemplateColumns:window.innerWidth<=768?"repeat(2,1fr)":"repeat(5,1fr)",gap:window.innerWidth<=768?8:10,marginBottom:14}}>
+      {[{l:"Total Customers",v:sum?.total_customers,c:"#1c1917",sp:[280,295,310,325,335,sum?.total_customers||340],sc:B.pri},
+        {l:"Pending Jobs",v:sum?.jobs?.pending,sub:`${sum?.jobs?.in_progress||0} in progress`,c:"#92400e",sp:[20,18,22,19,sum?.jobs?.pending||18],sc:"#f59e0b"},
+        {l:"Today's Revenue",v:fmt(sum?.payments?.today),c:"#065f46",sp:[8,11,9,12,sum?.payments?.today?sum.payments.today/1000:14],sc:"#16a34a"},
+        {l:"Monthly Revenue",v:sum?.payments?.this_month?`₹${(sum.payments.this_month/1000).toFixed(0)}k`:"—",c:"#1e3a8a",sp:[248,275,289,295,sum?.payments?.this_month?sum.payments.this_month/1000:312],sc:"#2563eb"},
+        {l:"Pending Collection",v:fmt(sum?.payments?.pending_collection),sub:"balance due",c:"#991b1b",danger:!loading&&sum?.payments?.pending_collection>50000,sp:[55,62,65,67],sc:"#dc2626"},
+      ].map((k,i)=>(
+        <div key={i} style={{background:"#fff",border:`1px solid ${k.danger?"#fca5a5":"#e7e5e4"}`,borderRadius:10,padding:"13px 14px",transition:"all .18s",cursor:"default",boxShadow:k.danger?"0 0 0 2px #fee2e2":"none"}}
+          onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"}
+          onMouseLeave={e=>e.currentTarget.style.transform="none"}>
+          <div style={{fontSize:10,color:"#78716c",fontWeight:600,marginBottom:6}}>{k.l}</div>
+          <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between"}}>
+            <div>
+              {loading?<Skel w={70} h={20}/>:<div style={{fontSize:20,fontWeight:800,color:k.c,lineHeight:1}}>{k.v??"-"}</div>}
+              {k.sub&&<div style={{fontSize:9,color:"#a8a29e",marginTop:2}}>{loading?<Skel w={90} h={9}/>:k.sub}</div>}
+            </div>
+            {!loading&&<Spark data={k.sp} color={k.sc}/>}
+          </div>
+        </div>
+      ))}
+    </div>
+
+    {/* Charts row */}
+    <div style={{display:"grid",gridTemplateColumns:window.innerWidth<=768?"1fr":"1fr 1fr 1fr",gap:window.innerWidth<=768?8:12,marginBottom:14}}>
+      <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:10,padding:"14px 16px"}}>
+        <SH title="Job Status"/>
+        {loading?<Skel h={100}/>:sum?.jobs?<JobPie jobs={sum.jobs}/>:<div style={{color:"#a8a29e",fontSize:12,textAlign:"center",padding:"24px 0"}}>No data</div>}
+      </div>
+      <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:10,padding:"14px 16px"}}>
+        <SH title="Low Stock" badge={ls.length}/>
+        {loading?<Skel h={100}/>:ls.length===0?<div style={{color:"#16a34a",fontSize:12,textAlign:"center",padding:"28px 0"}}>✓ All stock levels OK</div>:
+        <div style={{display:"flex",flexDirection:"column",gap:7}}>
+          {ls.slice(0,6).map((item,i)=>{const c=item.current_stock<=0?"#dc2626":"#f59e0b";return<div key={i} style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{width:6,height:6,borderRadius:"50%",background:c,flexShrink:0}}/>
+            <div style={{flex:1,fontSize:11,fontWeight:500,color:"#1c1917",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</div>
+            <span style={{fontSize:11,fontWeight:800,color:c}}>{item.current_stock} {item.unit_of_measure||""}</span>
+          </div>;})}
+        </div>}
+      </div>
+      <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:10,padding:"14px 16px"}}>
+        <SH title="Quick Actions"/>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
+          {[{l:"Customers",nav:"customers",bg:B.priL,tc:B.priD,bc:B.priM,roles:["admin","staff"]},
+            {l:"New Job",nav:"jobs",bg:"#f0fdf4",tc:"#065f46",bc:"#6ee7b7",roles:["admin","staff","sub_staff"]},
+            {l:"Payments",nav:"payments",bg:"#fffbeb",tc:"#92400e",bc:"#fcd34d",roles:["admin","staff"]},
+            {l:"Inventory",nav:"inventory",bg:"#eff6ff",tc:"#1e3a8a",bc:"#93c5fd",roles:["admin"]}
+          ].filter(q=>q.roles.includes(user?.role||"sub_staff")).map((q,i)=><button key={i} onClick={()=>setNav(q.nav)} style={{padding:"10px 0",borderRadius:7,border:`1px solid ${q.bc}`,background:q.bg,color:q.tc,fontSize:11,fontWeight:700,cursor:"pointer"}}>{q.l}</button>)}
+        </div>
+        {user.role==="admin"&&<div style={{marginTop:10,padding:"10px 12px",background:B.priL,borderRadius:8,border:`1px solid ${B.priM}`}}>
+          <div style={{fontSize:9,fontWeight:700,color:B.priD,marginBottom:3}}>Low Stock Alerts</div>
+          <div style={{fontSize:22,fontWeight:800,color:B.pri}}>{loading?<Skel w={30} h={18}/>:(sum?.low_stock_alerts||ls.length||0)}</div>
+          <div style={{fontSize:9,color:B.priD}}>items need reorder</div>
+        </div>}
+      </div>
+    </div>
+
+    {/* Jobs Table */}
+    <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:10,padding:"14px 16px"}}>
+      <SH title="Recent Jobs" action={()=>setNav("jobs")} al="All Jobs →"/>
+      <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
+        <div style={{position:"relative",flex:1,minWidth:150}}>
+          <span style={{position:"absolute",left:8,top:"50%",transform:"translateY(-50%)",color:"#a8a29e",fontSize:12}}>🔍</span>
+          <input value={js} onChange={e=>setJs(e.target.value)} placeholder="Search..." style={{...INP,paddingLeft:26,fontSize:11}}/>
+        </div>
+        {["All","Pending","In Progress","Completed","Delivered"].map(f=>(
+          <button key={f} onClick={()=>setJf(f)} style={{padding:"5px 9px",borderRadius:20,fontSize:10,fontWeight:700,cursor:"pointer",border:jf===f?`1px solid ${B.pri}`:"1px solid #e7e5e4",background:jf===f?B.priL:"#fff",color:jf===f?B.priD:"#78716c"}}>{f}</button>
+        ))}
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <thead><tr style={{borderBottom:"2px solid #f5f5f4"}}>
+            {["#","Customer","Type","Due","Balance","Status"].map(h=><th key={h} style={{textAlign:"left",padding:"0 9px 7px",fontSize:9,fontWeight:800,color:"#a8a29e",textTransform:"uppercase",letterSpacing:".06em",whiteSpace:"nowrap"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {loading?[1,2,3,4].map(i=><tr key={i}><td colSpan={6} style={{padding:"9px"}}><Skel h={12}/></td></tr>):
+            fj.length===0?<tr><td colSpan={6} style={{padding:"28px",textAlign:"center",color:"#a8a29e",fontSize:12}}>{jobs.length===0?"Server connect అయిన తర్వాత data load అవుతుంది":"No matching jobs"}</td></tr>:
+            fj.map(j=>{const ov=j.due_date&&new Date(j.due_date)<new Date()&&!["Delivered","Completed"].includes(j.status);return(
+              <tr key={j.id} style={{borderBottom:"1px solid #fafaf9",background:ov?"#fff7ed":"transparent"}}
+                onMouseEnter={e=>e.currentTarget.style.background=ov?"#fed7aa20":"#fafaf9"}
+                onMouseLeave={e=>e.currentTarget.style.background=ov?"#fff7ed":"transparent"}>
+                <td style={{padding:"8px 9px",fontWeight:800,color:B.pri,fontSize:11}}>#{j.id}</td>
+                <td style={{padding:"8px 9px",fontWeight:600,color:"#1c1917",maxWidth:110,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{j.customer_name||"—"}</td>
+                <td style={{padding:"8px 9px",color:"#57534e",maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{j.job_type}</td>
+                <td style={{padding:"8px 9px",color:ov?"#c2410c":"#78716c",fontWeight:ov?700:400,fontSize:11}}>{ov?"⚠ ":""}{j.due_date||"—"}</td>
+                <td style={{padding:"8px 9px",fontWeight:700,color:j.balance>0?"#dc2626":"#16a34a",fontSize:11}}>{j.balance>0?fmt(j.balance):"Paid ✓"}</td>
+                <td style={{padding:"8px 9px"}}><Badge status={j.status}/></td>
+              </tr>);})}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </Pg>;
+}
+
+/* ═════════════════════════════════════ CUSTOMERS ═══ */
+function Customers({api,toast}){
+  const[data,setData]=useState([]);const[loading,setLoading]=useState(true);
+  const[search,setSearch]=useState("");const[page,setPage]=useState(0);
+  const[modal,setModal]=useState(null);const[saving,setSaving]=useState(false);
+  const[form,setForm]=useState({name:"",mobile:"",email:"",address:"",tags:"",gst_no:"",pan_no:""});
+  const PER=15;
+  const load=useCallback(async()=>{setLoading(true);try{setData(await api.customers(search,200));}catch(e){toast(e.message,"error");}finally{setLoading(false);};},[api,search]);
+  useEffect(()=>{load();},[load]);useEffect(()=>setPage(0),[search]);
+  const paged=data.slice(page*PER,(page+1)*PER);
+  const save=async()=>{
+    if(!form.name||!form.mobile){toast("Name & Mobile అవసరం","error");return;}
+    setSaving(true);
+    try{
+      if(modal==="add"){await api.addCustomer(form);toast(`'${form.name}' added!`);}
+      else{await api.updateCustomer(modal.id,form);toast("Customer updated!");}
+      setModal(null);load();
+    }catch(e){toast(e.message,"error");}finally{setSaving(false);}
+  };
+  const openAdd=()=>{setForm({name:"",mobile:"",email:"",address:"",tags:"",gst_no:"",pan_no:""});setModal("add");};
+  const openEdit=c=>{setForm({name:c.name,mobile:c.mobile,email:c.email||"",address:c.address||"",tags:c.tags||"",gst_no:c.gst_no||"",pan_no:c.pan_no||""});setModal(c);};
+  return<Pg>
+    <PageHdr title="Customers" sub={`${data.length} total`} action={openAdd} actionLabel="Add Customer"/>
+    <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:12,padding:"14px 16px"}}>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        <div style={{position:"relative",flex:1}}>
+          <span style={{position:"absolute",left:8,top:"50%",transform:"translateY(-50%)",color:"#a8a29e",fontSize:12}}>🔍</span>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, mobile, email..." style={{...INP,paddingLeft:26}}/>
+        </div>
+        <button onClick={load} style={{...BTN("ghost"),padding:"9px 12px",fontSize:11}}>↻ Refresh</button>
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <thead><tr style={{borderBottom:"2px solid #f5f5f4"}}>
+            {["#","Name","Mobile","Email","Tags","GST",""].map(h=><th key={h} style={{textAlign:"left",padding:"0 9px 8px",fontSize:9,fontWeight:800,color:"#a8a29e",textTransform:"uppercase",letterSpacing:".06em",whiteSpace:"nowrap"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {loading?[1,2,3,4,5].map(i=><tr key={i}><td colSpan={7} style={{padding:"10px"}}><Skel h={12}/></td></tr>):
+            paged.length===0?<tr><td colSpan={7} style={{padding:"28px",textAlign:"center",color:"#a8a29e",fontSize:12}}>{search?"No results":"No customers yet — Add one!"}</td></tr>:
+            paged.map(c=><tr key={c.id} style={{borderBottom:"1px solid #fafaf9"}} onMouseEnter={e=>e.currentTarget.style.background="#fafaf9"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <td style={{padding:"9px",color:"#a8a29e",fontSize:10}}>#{c.id}</td>
+              <td style={{padding:"9px",fontWeight:700,color:"#1c1917"}}>{c.name}</td>
+              <td style={{padding:"9px",color:"#57534e",fontFamily:"monospace",fontSize:11}}>{c.mobile}</td>
+              <td style={{padding:"9px",color:"#78716c",maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.email||"—"}</td>
+              <td style={{padding:"9px"}}>{c.tags?c.tags.split(",").slice(0,2).map((t,i)=><span key={i} style={{fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:20,background:B.priL,color:B.priD,border:`1px solid ${B.priM}`,marginRight:3}}>{t.trim()}</span>):"—"}</td>
+              <td style={{padding:"9px",color:"#78716c",fontSize:11}}>{c.gst_no||"—"}</td>
+              <td style={{padding:"9px"}}><button onClick={()=>openEdit(c)} style={{fontSize:10,color:B.pri,fontWeight:700,background:"none",border:`1px solid ${B.priM}`,borderRadius:5,padding:"3px 8px",cursor:"pointer"}}>Edit</button></td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+      <Pager page={page} total={data.length} per={PER} onChange={setPage}/>
+    </div>
+    {modal&&<Modal title={modal==="add"?"Add Customer":`Edit — ${modal.name}`} onClose={()=>setModal(null)}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 13px"}}>
+        <Fld label="Name" req><input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} style={INP} placeholder="Full name"/></Fld>
+        <Fld label="Mobile" req><input value={form.mobile} onChange={e=>setForm(f=>({...f,mobile:e.target.value}))} style={INP} placeholder="10-digit mobile"/></Fld>
+        <Fld label="Email"><input value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} style={INP} placeholder="email@example.com"/></Fld>
+        <Fld label="GST No"><input value={form.gst_no} onChange={e=>setForm(f=>({...f,gst_no:e.target.value}))} style={INP} placeholder="22AAAAA0000A1Z5"/></Fld>
+        <Fld label="PAN No"><input value={form.pan_no} onChange={e=>setForm(f=>({...f,pan_no:e.target.value}))} style={INP}/></Fld>
+        <Fld label="Tags"><input value={form.tags} onChange={e=>setForm(f=>({...f,tags:e.target.value}))} style={INP} placeholder="VIP, Regular"/></Fld>
+      </div>
+      <Fld label="Address"><textarea value={form.address} onChange={e=>setForm(f=>({...f,address:e.target.value}))} style={{...INP,minHeight:54,resize:"vertical"}}/></Fld>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={()=>setModal(null)} style={BTN("ghost")}>Cancel</button><button onClick={save} disabled={saving} style={BTN()}>{saving?<Spin/>:modal==="add"?"Add Customer":"Save Changes"}</button></div>
+    </Modal>}
+  </Pg>;
+}
+
+/* ═══════════════════════════════════════════ JOBS ═══ */
+function Jobs({api,toast,user,role}){
+  const[jobs,setJobs]=useState([]);const[custs,setCusts]=useState([]);const[jts,setJts]=useState([]);
+  const[loading,setLoading]=useState(true);const[filter,setFilter]=useState("All");const[search,setSearch]=useState("");
+  const[page,setPage]=useState(0);const[modal,setModal]=useState(null);const[stModal,setStModal]=useState(null);const[matModal,setMatModal]=useState(null);
+  const[saving,setSaving]=useState(false);
+  const[form,setForm]=useState({customer_id:"",job_type:"",description:"",size:"",initial_price:"",discount_amount:"0",advance1:"0",due_date:"",notes:""});
+  const PER=15;
+  const load=useCallback(async()=>{setLoading(true);try{const[j,c,jt]=await Promise.all([api.jobs("limit=200"),api.customers("",200),api.jobTypes()]);setJobs(j);setCusts(c);setJts(jt);}catch(e){toast(e.message,"error");}finally{setLoading(false);};},[api]);
+  useEffect(()=>{load();},[load]);useEffect(()=>setPage(0),[filter,search]);
+  const fj=jobs.filter(j=>(filter==="All"||j.status===filter)&&(!search||(j.customer_name||"").toLowerCase().includes(search.toLowerCase())||String(j.id).includes(search)));
+  const paged=fj.slice(page*PER,(page+1)*PER);
+  const counts=["All","Pending","In Progress","Completed","Delivered"].reduce((a,s)=>{a[s]=s==="All"?jobs.length:jobs.filter(j=>j.status===s).length;return a;},{});
+  const fp=Number(form.initial_price||0)-Number(form.discount_amount||0);
+  const bal=fp-Number(form.advance1||0);
+  const saveJob=async()=>{
+    if(!form.customer_id||!form.job_type||!form.initial_price){toast("Customer, Type & Price అవసరం","error");return;}
+    setSaving(true);
+    try{await api.addJob({...form,customer_id:Number(form.customer_id),initial_price:Number(form.initial_price),discount_amount:Number(form.discount_amount||0),advance1:Number(form.advance1||0)});toast("Job created!");setModal(null);load();}
+    catch(e){toast(e.message,"error");}finally{setSaving(false);}
+  };
+  return<Pg>
+    <PageHdr title="Jobs" sub={`${jobs.length} total · ${(counts["Pending"]||0)+(counts["In Progress"]||0)} active`} action={()=>{setForm({customer_id:"",job_type:"",description:"",size:"",initial_price:"",discount_amount:"0",advance1:"0",due_date:"",notes:""});setModal("add");}} actionLabel="New Job"/>
+    <div style={{display:"flex",gap:5,marginBottom:12,flexWrap:"wrap"}}>
+      {["All","Pending","In Progress","Completed","Delivered"].map(s=><button key={s} onClick={()=>setFilter(s)} style={{padding:"5px 11px",borderRadius:20,fontSize:10,fontWeight:700,cursor:"pointer",border:filter===s?`1px solid ${B.pri}`:"1px solid #e7e5e4",background:filter===s?B.priL:"#fff",color:filter===s?B.priD:"#78716c"}}>{s} ({counts[s]||0})</button>)}
+    </div>
+    <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:12,padding:"14px 16px"}}>
+      <div style={{position:"relative",maxWidth:300,marginBottom:11}}>
+        <span style={{position:"absolute",left:8,top:"50%",transform:"translateY(-50%)",color:"#a8a29e",fontSize:12}}>🔍</span>
+        <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Customer, type, ID..." style={{...INP,paddingLeft:26}}/>
+      </div>
+      <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:window.innerWidth<=768?600:"auto"}}>
+          <thead><tr style={{borderBottom:"2px solid #f5f5f4"}}>
+            {["#","Customer","Type","Size","Price","Balance","Due","Status","",""].map(h=><th key={h} style={{textAlign:"left",padding:"0 9px 7px",fontSize:9,fontWeight:800,color:"#a8a29e",textTransform:"uppercase",letterSpacing:".06em",whiteSpace:"nowrap"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {loading?[1,2,3,4,5].map(i=><tr key={i}><td colSpan={9} style={{padding:"10px"}}><Skel h={12}/></td></tr>):
+            paged.length===0?<tr><td colSpan={9} style={{padding:"28px",textAlign:"center",color:"#a8a29e",fontSize:12}}>No jobs match filter.</td></tr>:
+            paged.map(j=>{const ov=j.due_date&&new Date(j.due_date)<new Date()&&!["Delivered","Completed"].includes(j.status);return(
+              <tr key={j.id} style={{borderBottom:"1px solid #fafaf9",background:ov?"#fff7ed":"transparent"}}
+                onMouseEnter={e=>e.currentTarget.style.background=ov?"#fed7aa20":"#fafaf9"}
+                onMouseLeave={e=>e.currentTarget.style.background=ov?"#fff7ed":"transparent"}>
+                <td style={{padding:"9px",fontWeight:800,color:B.pri,fontSize:11}}>#{j.id}</td>
+                <td style={{padding:"9px",fontWeight:600,color:"#1c1917",maxWidth:110,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{j.customer_name||"—"}</td>
+                <td style={{padding:"9px",color:"#57534e",maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{j.job_type}</td>
+                <td style={{padding:"9px",color:"#78716c",fontSize:11}}>{j.size||"—"}</td>
+                <td style={{padding:"9px",fontWeight:600,color:"#1c1917"}}>{fmt(j.final_price)}</td>
+                <td style={{padding:"9px",fontWeight:700,color:j.balance>0?"#dc2626":"#16a34a",fontSize:11}}>{j.balance>0?fmt(j.balance):"✓ Paid"}</td>
+                <td style={{padding:"9px",color:ov?"#c2410c":"#78716c",fontWeight:ov?700:400,fontSize:11}}>{ov?"⚠ ":""}{j.due_date||"—"}</td>
+                <td style={{padding:"9px"}}><Badge status={j.status}/></td>
+                <td style={{padding:"9px"}}><button onClick={()=>setStModal(j)} style={{fontSize:10,color:B.pri,fontWeight:700,background:"none",border:`1px solid ${B.priM}`,borderRadius:5,padding:"3px 8px",cursor:"pointer"}}>Update</button></td>
+                <td style={{padding:"9px"}}><button onClick={()=>setMatModal(j)} style={{fontSize:10,color:"#16a34a",fontWeight:700,background:"none",border:"1px solid #86efac",borderRadius:5,padding:"3px 8px",cursor:"pointer"}}>🧪 Material</button></td>
+              </tr>);})}
+          </tbody>
+        </table>
+      </div>
+      <Pager page={page} total={fj.length} per={PER} onChange={setPage}/>
+    </div>
+
+    {modal==="add"&&<Modal title="Create New Job" onClose={()=>setModal(null)} w={520}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 13px"}}>
+        <div style={{gridColumn:"1/-1"}}><Fld label="Customer" req><CustSearch custs={custs} value={form.customer_id} onChange={v=>setForm(f=>({...f,customer_id:v}))}/></Fld></div>
+        <Fld label="Job Type" req><select value={form.job_type} onChange={e=>setForm(f=>({...f,job_type:e.target.value}))} style={SEL}><option value="">-- Select Type --</option>{[...new Set(jts.map(jt=>jt.name))].map(n=><option key={n} value={n}>{n}</option>)}</select></Fld>
+        <Fld label="Size"><input value={form.size} onChange={e=>setForm(f=>({...f,size:e.target.value}))} style={INP} placeholder="4x6 ft, A4"/></Fld>
+        <Fld label="Price (₹)" req><input type="number" value={form.initial_price} onChange={e=>setForm(f=>({...f,initial_price:e.target.value}))} style={INP} placeholder="0"/></Fld>
+        <Fld label="Discount (₹)"><input type="number" value={form.discount_amount} onChange={e=>setForm(f=>({...f,discount_amount:e.target.value}))} style={INP}/></Fld>
+        <Fld label="Advance (₹)"><input type="number" value={form.advance1} onChange={e=>setForm(f=>({...f,advance1:e.target.value}))} style={INP}/></Fld>
+        <Fld label="Due Date"><input type="date" value={form.due_date} onChange={e=>setForm(f=>({...f,due_date:e.target.value}))} style={INP} min={TODAY()}/></Fld>
+        <div style={{gridColumn:"1/-1"}}>
+          <Fld label="Description"><textarea value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} style={{...INP,minHeight:50,resize:"vertical"}} placeholder="Job details..."/></Fld>
+          <Fld label="Notes"><input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} style={INP} placeholder="Internal notes..."/></Fld>
+        </div>
+      </div>
+      {form.initial_price&&<div style={{background:B.priL,border:`1px solid ${B.priM}`,borderRadius:8,padding:"10px 12px",marginBottom:12,display:"flex",gap:20}}>
+        <div><div style={{fontSize:9,color:"#78716c",fontWeight:600}}>Final Price</div><div style={{fontSize:16,fontWeight:800,color:B.priD}}>{fmt(fp)}</div></div>
+        <div><div style={{fontSize:9,color:"#78716c",fontWeight:600}}>Balance Due</div><div style={{fontSize:16,fontWeight:800,color:"#dc2626"}}>{fmt(bal)}</div></div>
+      </div>}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={()=>setModal(null)} style={BTN("ghost")}>Cancel</button><button onClick={saveJob} disabled={saving} style={BTN()}>{saving?<Spin/>:"Create Job"}</button></div>
+    </Modal>}
+
+    {stModal&&<StatusModal job={stModal} onClose={()=>setStModal(null)} api={api} toast={toast} onDone={()=>{setStModal(null);load();}}/>}
+    {matModal&&<MaterialEntryModal job={matModal} onClose={()=>setMatModal(null)} api={api} toast={toast} user={user}/>}
+  </Pg>;
+}
+
+function StatusModal({job,onClose,api,toast,onDone}){
+  const[status,setStatus]=useState(job.status);const[notes,setNotes]=useState("");const[saving,setSaving]=useState(false);
+  const save=async()=>{setSaving(true);try{await api.updateJobStatus(job.id,status,notes);toast(`Job #${job.id} → ${status}`);onDone();}catch(e){toast(e.message,"error");}finally{setSaving(false);};};
+  return<Modal title={`Update Job #${job.id}`} onClose={onClose} w={400}>
+    <div style={{background:"#fafaf9",borderRadius:8,padding:"9px 12px",marginBottom:12}}>
+      <div style={{fontSize:13,fontWeight:700,color:"#1c1917"}}>{job.customer_name}</div>
+      <div style={{fontSize:11,color:"#57534e"}}>{job.job_type}{job.size?` · ${job.size}`:""}</div>
+    </div>
+    <Fld label="New Status">
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
+        {["Pending","In Progress","Completed","Delivered"].map(s=><button key={s} onClick={()=>setStatus(s)} style={{padding:"9px 0",borderRadius:7,border:status===s?`2px solid ${B.pri}`:"1px solid #e7e5e4",background:status===s?B.priL:"#fff",color:status===s?B.priD:"#57534e",fontSize:12,fontWeight:status===s?700:500,cursor:"pointer"}}>{s}</button>)}
+      </div>
+    </Fld>
+    <Fld label="Notes (optional)"><textarea value={notes} onChange={e=>setNotes(e.target.value)} style={{...INP,minHeight:50,resize:"vertical"}} placeholder="Remarks..."/></Fld>
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={BTN("ghost")}>Cancel</button><button onClick={save} disabled={saving||status===job.status} style={{...BTN(),opacity:status===job.status?.5:1}}>{saving?<Spin/>:"Update"}</button></div>
+  </Modal>;
+}
+
+/* ═══════════════════ MATERIAL ENTRY MODAL (Jobs లో) ═══ */
+function MaterialEntryModal({job,onClose,api,toast,user}){
+  const[items,setItems]=useState([]);const[form,setForm]=useState({item_id:"",trans_type:"Usage",qty:"",remarks:""});
+  const[saving,setSaving]=useState(false);
+  useEffect(()=>{api.inventoryItems().then(setItems).catch(()=>{});},[]);
+  const save=async()=>{
+    if(!form.item_id||!form.qty||Number(form.qty)<=0){toast("Material & Qty అవసరం","error");return;}
+    setSaving(true);
+    try{
+      await api.addTransaction({item_id:Number(form.item_id),user_id:user.id,trans_type:form.trans_type,qty:Number(form.qty),remarks:form.remarks,job_id:job.id});
+      toast(`✅ ${form.trans_type} recorded for Job #${job.id}`);onClose();
+    }catch(e){toast(e.message,"error");}finally{setSaving(false);}
+  };
+  const selItem=items.find(i=>String(i.id)===String(form.item_id));
+  return<Modal title={`🧪 Material Entry — Job #${job.id}`} onClose={onClose} w={440}>
+    <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:8,padding:"9px 12px",marginBottom:12}}>
+      <div style={{fontSize:12,fontWeight:700,color:"#15803d"}}>{job.customer_name} — {job.job_type}</div>
+      {job.size&&<div style={{fontSize:10,color:"#16a34a"}}>Size: {job.size}</div>}
+    </div>
+    <Fld label="Transaction Type" req>
+      <div style={{display:"flex",gap:7}}>
+        {["Usage","Wastage"].map(t=><button key={t} onClick={()=>setForm(f=>({...f,trans_type:t}))} style={{flex:1,padding:"8px 0",borderRadius:7,border:form.trans_type===t?`2px solid ${t==="Usage"?"#16a34a":"#dc2626"}`:"1px solid #e7e5e4",background:form.trans_type===t?t==="Usage"?"#f0fdf4":"#fef2f2":"#fff",color:form.trans_type===t?t==="Usage"?"#15803d":"#dc2626":"#57534e",fontSize:12,fontWeight:700,cursor:"pointer"}}>{t==="Usage"?"✅ Usage":"⚠️ Wastage"}</button>)}
+      </div>
+    </Fld>
+    <Fld label="Material" req>
+      <select value={form.item_id} onChange={e=>setForm(f=>({...f,item_id:e.target.value}))} style={SEL}>
+        <option value="">-- Select Material --</option>
+        {items.filter(i=>i.is_active!==0).map(i=><option key={i.id} value={i.id}>{i.name} ({i.uom||"Pcs"}) — Stock: {i.current_stock}</option>)}
+      </select>
+    </Fld>
+    {selItem&&<div style={{background:"#fafaf9",borderRadius:6,padding:"7px 10px",marginTop:-6,marginBottom:10,fontSize:11,color:"#57534e"}}>
+      Current Stock: <strong style={{color:selItem.current_stock<=selItem.reorder_level?"#dc2626":"#16a34a"}}>{selItem.current_stock} {selItem.uom||"Pcs"}</strong>
+      {selItem.current_stock<=selItem.reorder_level&&<span style={{color:"#dc2626",fontWeight:700}}> ⚠ Low!</span>}
+    </div>}
+    <Fld label="Quantity" req>
+      <input type="number" min="0.1" step="0.1" value={form.qty} onChange={e=>setForm(f=>({...f,qty:e.target.value}))} style={INP} placeholder="0"/>
+    </Fld>
+    <Fld label="Remarks">
+      <input value={form.remarks} onChange={e=>setForm(f=>({...f,remarks:e.target.value}))} style={INP} placeholder="Optional notes..."/>
+    </Fld>
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+      <button onClick={onClose} style={BTN("ghost")}>Cancel</button>
+      <button onClick={save} disabled={saving} style={{...BTN(),background:form.trans_type==="Wastage"?"#dc2626":B.pri}}>{saving?<Spin/>:`Record ${form.trans_type}`}</button>
+    </div>
+  </Modal>;
+}
+
+/* ════════════════════════════════ MATERIAL USAGE PAGE ═══ */
+function MaterialUsage({api,user,role,toast}){
+  const[items,setItems]=useState([]);const[jobs,setJobs]=useState([]);
+  const[entries,setEntries]=useState([]);const[loading,setLoading]=useState(false);
+  const[saving,setSaving]=useState(false);const[days,setDays]=useState(30);
+  const[form,setForm]=useState({item_id:"",trans_type:"Usage",qty:"",job_id:"",remarks:""});
+  const isAdmin=role==="admin";
+
+  const loadAll=useCallback(async()=>{
+    setLoading(true);
+    try{
+      const[inv,activeJobs,myE]=await Promise.all([
+        api.inventoryItems(),
+        api.activeJobs(user?.id,role),
+        api.myEntries(user?.id,days),
+      ]);
+      setItems(inv);setJobs(activeJobs);setEntries(myE);
+    }catch(e){toast(e.message,"error");}finally{setLoading(false);}
+  },[api,user,days,role]);
+  useEffect(()=>{loadAll();},[loadAll]);
+
+  const selItem=items.find(i=>String(i.id)===String(form.item_id));
+
+  const save=async()=>{
+    if(!form.item_id||!form.qty||Number(form.qty)<=0){toast("Material & Quantity అవసరం","error");return;}
+    if(role==="staff"&&form.trans_type==="Stock In"){toast("Stock In permission లేదు","error");return;}
+    setSaving(true);
+    try{
+      await api.addTransaction({item_id:Number(form.item_id),user_id:user.id,trans_type:form.trans_type,qty:Number(form.qty),job_id:form.job_id?Number(form.job_id):null,remarks:form.remarks});
+      toast(`✅ ${form.trans_type} recorded!`);
+      setForm({item_id:"",trans_type:"Usage",qty:"",job_id:"",remarks:""});
+      loadAll();
+    }catch(e){toast(e.message,"error");}finally{setSaving(false);}
+  };
+
+  const typeColor={"Usage":"#16a34a","Wastage":"#dc2626","Stock In":"#2563eb"};
+  const totalUsage=entries.filter(e=>e.transaction_type==="Usage").reduce((s,e)=>s+(e.quantity||0),0);
+  const totalWastage=entries.filter(e=>e.transaction_type==="Wastage").reduce((s,e)=>s+(e.quantity||0),0);
+
+  return<Pg>
+    <PageHdr title="🧪 Material Usage" sub="Material usage & wastage record చేయండి"/>
+    <div style={{display:"grid",gridTemplateColumns:window.innerWidth<=768?"1fr":"420px 1fr",gap:window.innerWidth<=768?12:16,alignItems:"start"}}>
+
+      {/* Entry Form */}
+      <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:12,padding:"18px"}}>
+        <h3 style={{fontSize:13,fontWeight:800,color:"#1c1917",marginBottom:14}}>New Entry</h3>
+
+        <Fld label="Transaction Type" req>
+          <div style={{display:"flex",gap:7}}>
+            {(isAdmin?["Usage","Wastage","Stock In"]:["Usage","Wastage"]).map(t=>{
+              const c=t==="Usage"?"#16a34a":t==="Wastage"?"#dc2626":"#2563eb";
+              const bg=t==="Usage"?"#f0fdf4":t==="Wastage"?"#fef2f2":"#eff6ff";
+              return<button key={t} onClick={()=>setForm(f=>({...f,trans_type:t}))}
+                style={{flex:1,padding:"8px 4px",borderRadius:7,border:form.trans_type===t?`2px solid ${c}`:"1px solid #e7e5e4",background:form.trans_type===t?bg:"#fff",color:form.trans_type===t?c:"#57534e",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                {t==="Usage"?"✅":t==="Wastage"?"⚠️":"📦"} {t}
+              </button>;})}
+          </div>
+        </Fld>
+
+        <Fld label="Material" req>
+          <select value={form.item_id} onChange={e=>setForm(f=>({...f,item_id:e.target.value}))} style={SEL}>
+            <option value="">-- Select Material --</option>
+            {items.filter(i=>i.is_active!==0).map(i=><option key={i.id} value={i.id}>{i.name} ({i.uom||"Pcs"}) — Stock: {i.current_stock}</option>)}
+          </select>
+        </Fld>
+
+        {selItem&&<div style={{background:"#fafaf9",border:"1px solid #e7e5e4",borderRadius:8,padding:"9px 12px",marginTop:-6,marginBottom:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:11,fontWeight:700,color:"#1c1917"}}>{selItem.name}</div>
+              <div style={{fontSize:10,color:"#78716c"}}>{selItem.item_type||""} {selItem.item_size||""}</div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:18,fontWeight:800,color:selItem.current_stock<=selItem.reorder_level?"#dc2626":"#16a34a"}}>{selItem.current_stock}</div>
+              <div style={{fontSize:9,color:"#78716c",fontWeight:600}}>{selItem.uom||"Pcs"} in stock</div>
+            </div>
+          </div>
+          {selItem.current_stock<=selItem.reorder_level&&<div style={{marginTop:6,fontSize:10,color:"#dc2626",fontWeight:700,background:"#fef2f2",borderRadius:5,padding:"3px 7px",display:"inline-block"}}>⚠️ Low Stock — Reorder: {selItem.reorder_level}</div>}
+        </div>}
+
+        <Fld label="Quantity" req>
+          <div style={{display:"flex",gap:7,alignItems:"center"}}>
+            <input type="number" min="0.01" step="0.01" value={form.qty} onChange={e=>setForm(f=>({...f,qty:e.target.value}))} style={{...INP,flex:1}} placeholder="0.00"/>
+            {selItem&&<span style={{fontSize:11,color:"#78716c",fontWeight:600,whiteSpace:"nowrap"}}>{selItem.uom||"Pcs"}</span>}
+          </div>
+        </Fld>
+
+        <Fld label="Link to Job (Optional)">
+          <select value={form.job_id} onChange={e=>setForm(f=>({...f,job_id:e.target.value}))} style={SEL}>
+            <option value="">-- No specific job --</option>
+            {jobs.map(j=><option key={j.id} value={j.id}>#{j.id} — {j.customer_name} ({j.job_type})</option>)}
+          </select>
+        </Fld>
+
+        <Fld label="Remarks">
+          <input value={form.remarks} onChange={e=>setForm(f=>({...f,remarks:e.target.value}))} style={INP} placeholder="Optional notes..."/>
+        </Fld>
+
+        <button onClick={save} disabled={saving} style={{...BTN(),width:"100%",background:form.trans_type==="Wastage"?"#dc2626":form.trans_type==="Stock In"?"#2563eb":B.pri,padding:"11px"}}>
+          {saving?<Spin/>:`Record ${form.trans_type}`}
+        </button>
+      </div>
+
+      {/* My Recent Entries */}
+      <div>
+        <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <h3 style={{fontSize:13,fontWeight:800,color:"#1c1917",margin:0}}>My Entries</h3>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <span style={{fontSize:10,color:"#78716c"}}>Last</span>
+              <select value={days} onChange={e=>setDays(Number(e.target.value))} style={{...SEL,width:"auto",padding:"4px 8px",fontSize:11}}>
+                <option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Stats */}
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            {[{l:"Total Usage",v:totalUsage.toFixed(1),c:"#16a34a"},{l:"Total Wastage",v:totalWastage.toFixed(1),c:"#dc2626"},{l:"Entries",v:entries.length,c:"#2563eb"}].map((s,i)=><div key={i} style={{flex:1,background:"#fafaf9",borderRadius:8,padding:"9px 11px",textAlign:"center"}}>
+              <div style={{fontSize:10,color:"#78716c",fontWeight:600}}>{s.l}</div>
+              <div style={{fontSize:18,fontWeight:800,color:s.c}}>{s.v}</div>
+            </div>)}
+          </div>
+
+          {/* Table */}
+          {loading?<div style={{textAlign:"center",padding:"20px",color:"#a8a29e"}}><Spin/> Loading...</div>:
+          entries.length===0?<div style={{textAlign:"center",padding:"20px",color:"#a8a29e",fontSize:12}}>No entries in this period.</div>:
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+              <thead><tr style={{borderBottom:"2px solid #f5f5f4"}}>
+                {["Date","Material","Qty","Type","Job","Remarks"].map(h=><th key={h} style={{textAlign:"left",padding:"0 8px 6px",fontSize:9,fontWeight:800,color:"#a8a29e",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {entries.slice(0,50).map((e,i)=><tr key={i} style={{borderBottom:"1px solid #fafaf9"}}>
+                  <td style={{padding:"7px 8px",color:"#78716c",whiteSpace:"nowrap"}}>{(e.timestamp||"").slice(0,16)}</td>
+                  <td style={{padding:"7px 8px",fontWeight:600,color:"#1c1917"}}>{e.material_name}</td>
+                  <td style={{padding:"7px 8px",fontWeight:700,color:typeColor[e.transaction_type]||"#57534e"}}>{e.quantity} <span style={{fontSize:9,color:"#a8a29e"}}>{e.uom||""}</span></td>
+                  <td style={{padding:"7px 8px"}}><span style={{fontSize:9,fontWeight:800,padding:"2px 7px",borderRadius:20,background:e.transaction_type==="Usage"?"#dcfce7":e.transaction_type==="Wastage"?"#fef2f2":"#eff6ff",color:typeColor[e.transaction_type]||"#57534e"}}>{e.transaction_type}</span></td>
+                  <td style={{padding:"7px 8px",color:"#78716c"}}>{e.job_id?`#${e.job_id}`:"-"}</td>
+                  <td style={{padding:"7px 8px",color:"#78716c",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.remarks||"-"}</td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>}
+        </div>
+      </div>
+    </div>
+  </Pg>;
+}
+
+/* ════════════════════════════════════════ PAYMENTS ═══ */
+function Payments({api,toast,user,role}){
+  const[pays,setPays]=useState([]);const[custs,setCusts]=useState([]);const[jobs,setJobs]=useState([]);
+  const[loading,setLoading]=useState(true);const[modal,setModal]=useState(false);const[saving,setSaving]=useState(false);
+  const[search,setSearch]=useState("");const[page,setPage]=useState(0);
+  const[form,setForm]=useState({customer_id:"",job_id:"",amount:"",payment_date:TODAY(),payment_mode:"Cash",notes:""});
+  const PER=15;
+  const load=useCallback(async()=>{setLoading(true);try{const[p,c,j]=await Promise.all([api.payments("limit=200"),api.customers("",200),api.jobs("limit=200")]);setPays(p);setCusts(c);setJobs(j);}catch(e){toast(e.message,"error");}finally{setLoading(false);};},[api]);
+  useEffect(()=>{load();},[load]);
+  const fp=pays.filter(p=>!search||(p.customer_name||"").toLowerCase().includes(search.toLowerCase()));
+  const paged=fp.slice(page*PER,(page+1)*PER);
+  const total=pays.reduce((s,p)=>s+(p.amount||0),0);
+  const todayAmt=pays.filter(p=>p.payment_date===TODAY()).reduce((s,p)=>s+p.amount,0);
+  const custJobs=jobs.filter(j=>String(j.customer_id)===String(form.customer_id)&&j.balance>0);
+  const save=async()=>{
+    if(!form.customer_id||!form.amount){toast("Customer & Amount అవసరం","error");return;}
+    setSaving(true);
+    try{await api.addPayment({...form,customer_id:Number(form.customer_id),amount:Number(form.amount),job_id:form.job_id?Number(form.job_id):null});toast(`${fmt(form.amount)} recorded!`);setModal(false);setForm({customer_id:"",job_id:"",amount:"",payment_date:TODAY(),payment_mode:"Cash",notes:""});load();}
+    catch(e){toast(e.message,"error");}finally{setSaving(false);}
+  };
+  return<Pg>
+    <PageHdr title="Payments" sub={`${pays.length} records · ${fmt(total)} total`} action={()=>setModal(true)} actionLabel="Record Payment"/>
+    <div style={{display:"grid",gridTemplateColumns:window.innerWidth<=768?"1fr":"repeat(3,1fr)",gap:window.innerWidth<=768?8:10,marginBottom:14}}>
+      {[{l:"Total Collected",v:fmt(total),c:"#16a34a"},{l:"Today's Revenue",v:fmt(todayAmt),c:B.pri},{l:"Transactions",v:pays.length,c:"#2563eb"}].map((s,i)=><div key={i} style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:10,padding:"13px 15px"}}><div style={{fontSize:10,color:"#78716c",fontWeight:600,marginBottom:4}}>{s.l}</div><div style={{fontSize:20,fontWeight:800,color:s.c}}>{s.v}</div></div>)}
+    </div>
+    <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:12,padding:"14px 16px"}}>
+      <div style={{position:"relative",maxWidth:280,marginBottom:11}}>
+        <span style={{position:"absolute",left:8,top:"50%",transform:"translateY(-50%)",color:"#a8a29e",fontSize:12}}>🔍</span>
+        <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Search customer..." style={{...INP,paddingLeft:26}}/>
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <thead><tr style={{borderBottom:"2px solid #f5f5f4"}}>
+            {["#","Customer","Job","Amount","Date","Mode","Notes"].map(h=><th key={h} style={{textAlign:"left",padding:"0 9px 7px",fontSize:9,fontWeight:800,color:"#a8a29e",textTransform:"uppercase",letterSpacing:".06em",whiteSpace:"nowrap"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {loading?[1,2,3].map(i=><tr key={i}><td colSpan={7} style={{padding:"10px"}}><Skel h={12}/></td></tr>):
+            paged.length===0?<tr><td colSpan={7} style={{padding:"28px",textAlign:"center",color:"#a8a29e",fontSize:12}}>No payments found.</td></tr>:
+            paged.map(p=><tr key={p.id} style={{borderBottom:"1px solid #fafaf9"}} onMouseEnter={e=>e.currentTarget.style.background="#fafaf9"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <td style={{padding:"9px",color:"#a8a29e",fontSize:10}}>#{p.id}</td>
+              <td style={{padding:"9px",fontWeight:600,color:"#1c1917"}}>{p.customer_name||"—"}</td>
+              <td style={{padding:"9px",color:B.pri,fontWeight:700}}>{p.job_id?`#${p.job_id}`:"—"}</td>
+              <td style={{padding:"9px",fontWeight:800,color:"#16a34a"}}>{fmt(p.amount)}</td>
+              <td style={{padding:"9px",color:"#57534e",fontSize:11}}>{p.payment_date}</td>
+              <td style={{padding:"9px"}}><span style={{fontSize:9,fontWeight:800,padding:"2px 7px",borderRadius:20,background:"#f0fdf4",color:"#15803d",border:"1px solid #86efac"}}>{p.payment_mode||"Cash"}</span></td>
+              <td style={{padding:"9px",color:"#78716c",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.notes||"—"}</td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+      <Pager page={page} total={fp.length} per={PER} onChange={setPage}/>
+    </div>
+    {modal&&<Modal title="Record Payment" onClose={()=>setModal(false)} w={440}>
+      <Fld label="Customer" req><CustSearch custs={custs} value={form.customer_id} onChange={v=>setForm(f=>({...f,customer_id:v,job_id:""}))}/></Fld>
+      {form.customer_id&&custJobs.length>0&&<Fld label="Link Job (optional)"><select value={form.job_id} onChange={e=>setForm(f=>({...f,job_id:e.target.value}))} style={SEL}><option value="">-- No specific job --</option>{custJobs.map(j=><option key={j.id} value={j.id}>#{j.id} {j.job_type} — {fmt(j.balance)} due</option>)}</select></Fld>}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 13px"}}>
+        <Fld label="Amount (₹)" req><input type="number" value={form.amount} onChange={e=>setForm(f=>({...f,amount:e.target.value}))} style={INP} placeholder="0.00"/></Fld>
+        <Fld label="Date"><input type="date" value={form.payment_date} onChange={e=>setForm(f=>({...f,payment_date:e.target.value}))} style={INP}/></Fld>
+        <Fld label="Mode"><select value={form.payment_mode} onChange={e=>setForm(f=>({...f,payment_mode:e.target.value}))} style={SEL}>{["Cash","UPI","Card","Cheque","Bank Transfer","Other"].map(m=><option key={m}>{m}</option>)}</select></Fld>
+        <Fld label="Notes"><input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} style={INP} placeholder="Optional"/></Fld>
+      </div>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:4}}><button onClick={()=>setModal(false)} style={BTN("ghost")}>Cancel</button><button onClick={save} disabled={saving} style={BTN()}>{saving?<Spin/>:"Record Payment"}</button></div>
+    </Modal>}
+  </Pg>;
+}
+
+/* ══════════════════════════════════════ INVENTORY ═══ */
+function Inventory({api,toast,user,role}){
+  const[items,setItems]=useState([]);const[loading,setLoading]=useState(true);
+  const[search,setSearch]=useState("");const[stModal,setStModal]=useState(null);
+  const[saving,setSaving]=useState(false);const[qty,setQty]=useState("");const[notes,setNotes]=useState("");const[mode,setMode]=useState("add");
+  const load=useCallback(async()=>{setLoading(true);try{setItems(await api.inventory());}catch(e){toast(e.message,"error");}finally{setLoading(false);};},[api]);
+  useEffect(()=>{load();},[load]);
+  const fi=items.filter(i=>!search||i.name.toLowerCase().includes(search.toLowerCase())||(i.category_name||"").toLowerCase().includes(search.toLowerCase()));
+  const low=items.filter(i=>i.current_stock<=i.reorder_level).length;
+  const sc=item=>item.current_stock<=0?"#dc2626":item.current_stock<=item.reorder_level?"#f59e0b":"#16a34a";
+  const update=async()=>{
+    if(!qty){toast("Quantity enter చేయండి","error");return;}
+    setSaving(true);
+    try{await api.updateStock(stModal.id,mode==="add"?Number(qty):-Number(qty),notes);toast("Stock updated!");setStModal(null);setQty("");setNotes("");load();}
+    catch(e){toast(e.message,"error");}finally{setSaving(false);}
+  };
+  return<Pg>
+    <PageHdr title="Inventory" sub={`${items.length} items · ${low>0?`${low} low stock`:"All OK"}`}/>
+    <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:12,padding:"14px 16px"}}>
+      <div style={{display:"flex",gap:8,marginBottom:11}}>
+        <div style={{position:"relative",flex:1,maxWidth:280}}>
+          <span style={{position:"absolute",left:8,top:"50%",transform:"translateY(-50%)",color:"#a8a29e",fontSize:12}}>🔍</span>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search items..." style={{...INP,paddingLeft:26}}/>
+        </div>
+        <button onClick={load} style={{...BTN("ghost"),padding:"9px 12px",fontSize:11}}>↻ Refresh</button>
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <thead><tr style={{borderBottom:"2px solid #f5f5f4"}}>
+            {["Item","Category","Stock","Unit","Reorder Lvl","Vendor","Status",""].map(h=><th key={h} style={{textAlign:"left",padding:"0 9px 7px",fontSize:9,fontWeight:800,color:"#a8a29e",textTransform:"uppercase",letterSpacing:".06em",whiteSpace:"nowrap"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {loading?[1,2,3,4].map(i=><tr key={i}><td colSpan={8} style={{padding:"10px"}}><Skel h={12}/></td></tr>):
+            fi.length===0?<tr><td colSpan={8} style={{padding:"28px",textAlign:"center",color:"#a8a29e"}}>No items found.</td></tr>:
+            fi.map(item=>{const isLow=item.current_stock<=item.reorder_level;const c=sc(item);return(
+              <tr key={item.id} style={{borderBottom:"1px solid #fafaf9",background:item.current_stock<=0?"#fef2f2":isLow?"#fffbeb":"transparent"}}>
+                <td style={{padding:"9px",fontWeight:700,color:"#1c1917"}}>{item.name}</td>
+                <td style={{padding:"9px",color:"#78716c"}}>{item.category_name||"—"}</td>
+                <td style={{padding:"9px",fontWeight:800,color:c,fontSize:14}}>{item.current_stock}</td>
+                <td style={{padding:"9px",color:"#78716c"}}>{item.unit_of_measure||item.uom||"—"}</td>
+                <td style={{padding:"9px",color:"#78716c"}}>{item.reorder_level||"—"}</td>
+                <td style={{padding:"9px",color:"#78716c",maxWidth:90,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.vendor_name||"—"}</td>
+                <td style={{padding:"9px"}}><span style={{fontSize:9,fontWeight:800,padding:"2px 7px",borderRadius:20,background:item.current_stock<=0?"#fef2f2":isLow?"#fffbeb":"#f0fdf4",color:c,border:`1px solid ${item.current_stock<=0?"#fca5a5":isLow?"#fcd34d":"#86efac"}`}}>{item.current_stock<=0?"Out of Stock":isLow?"Low Stock":"In Stock"}</span></td>
+                <td style={{padding:"9px"}}><button onClick={()=>{setStModal(item);setQty("");setNotes("");setMode("add");}} style={{fontSize:10,color:B.pri,fontWeight:700,background:"none",border:`1px solid ${B.priM}`,borderRadius:5,padding:"3px 8px",cursor:"pointer"}}>Update</button></td>
+              </tr>);})}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {stModal&&<Modal title={`Stock Update — ${stModal.name}`} onClose={()=>setStModal(null)} w={380}>
+      <div style={{background:"#fafaf9",borderRadius:8,padding:"9px 12px",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontSize:11,color:"#78716c"}}>Current Stock</span>
+        <span style={{fontSize:18,fontWeight:800,color:sc(stModal)}}>{stModal.current_stock} {stModal.unit_of_measure||""}</span>
+      </div>
+      <Fld label="Transaction Type">
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
+          {[{v:"add",l:"➕ Add Stock"},{v:"use",l:"➖ Use / Issue"}].map(o=><button key={o.v} onClick={()=>setMode(o.v)} style={{padding:"9px 0",borderRadius:7,border:mode===o.v?`2px solid ${B.pri}`:"1px solid #e7e5e4",background:mode===o.v?B.priL:"#fff",color:mode===o.v?B.priD:"#57534e",fontSize:11,fontWeight:mode===o.v?700:500,cursor:"pointer"}}>{o.l}</button>)}
+        </div>
+      </Fld>
+      <Fld label="Quantity" req><input type="number" value={qty} onChange={e=>setQty(e.target.value)} style={INP} min="0.01" step="0.01" placeholder="0"/></Fld>
+      {qty&&<div style={{background:mode==="add"?"#f0fdf4":"#fef2f2",borderRadius:7,padding:"8px 12px",marginBottom:11,fontSize:12,fontWeight:700,color:mode==="add"?"#15803d":"#dc2626"}}>New stock: {mode==="add"?+stModal.current_stock+ +qty:+stModal.current_stock- +qty} {stModal.unit_of_measure||""}</div>}
+      <Fld label="Notes"><input value={notes} onChange={e=>setNotes(e.target.value)} style={INP} placeholder="Supplier, reason..."/></Fld>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={()=>setStModal(null)} style={BTN("ghost")}>Cancel</button><button onClick={update} disabled={saving} style={BTN()}>{saving?<Spin/>:"Update Stock"}</button></div>
+    </Modal>}
+  </Pg>;
+}
+
+/* ═══════════════════════════════════════ REPORTS ═══ */
+function Reports({api,role,toast}){
+  const[tab,setTab]=useState("daily");const[date,setDate]=useState(TODAY());
+  const[report,setReport]=useState(null);const[log,setLog]=useState([]);const[loading,setLoading]=useState(false);
+  const fetchD=useCallback(async()=>{setLoading(true);try{setReport(await api.dailyReport(date));}catch(e){toast(e.message,"error");}finally{setLoading(false);};},[api,date]);
+  const fetchL=async()=>{setLoading(true);try{setLog(await api.activityLog(80));}catch(e){toast(e.message,"error");}finally{setLoading(false);};};
+  useEffect(()=>{tab==="daily"?fetchD():fetchL();},[tab,date]);
+  return<Pg>
+    <div style={{marginBottom:16}}><h2 style={{fontSize:19,fontWeight:800,color:"#1c1917",margin:0}}>Reports</h2><p style={{fontSize:11,color:"#78716c",margin:"2px 0 0"}}>Business insights & activity</p></div>
+    <div style={{display:"flex",gap:5,marginBottom:14}}>
+      {[{v:"daily",l:"📊 Daily Report"},{v:"log",l:"📋 Activity Log"}].map(t=><button key={t.v} onClick={()=>setTab(t.v)} style={{padding:"7px 14px",borderRadius:20,fontSize:11,fontWeight:700,cursor:"pointer",border:tab===t.v?`1px solid ${B.pri}`:"1px solid #e7e5e4",background:tab===t.v?B.priL:"#fff",color:tab===t.v?B.priD:"#78716c"}}>{t.l}</button>)}
+    </div>
+    {tab==="daily"&&<>
+      <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"center"}}>
+        <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...INP,width:"auto"}} max={TODAY()}/>
+        <button onClick={fetchD} style={BTN()}>Load Report</button>
+      </div>
+      {loading?<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>{[1,2,3,4,5,6].map(i=><div key={i} style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:10,padding:"16px"}}><Skel h={40}/></div>)}</div>:
+      report&&<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+        {[{l:"New Customers",v:report.new_customers,c:B.pri,e:"👥"},
+          {l:"New Jobs",v:report.new_jobs,c:"#2563eb",e:"📋"},
+          {l:"Jobs Completed",v:report.jobs_completed,c:"#16a34a",e:"✅"},
+          {l:"Payments Count",v:report.payments_count,c:"#7c3aed",e:"💳"},
+          {l:"Revenue",v:fmt(report.payments_total),c:"#16a34a",e:"₹",big:true},
+          {l:"Report Date",v:report.date,c:"#78716c",e:"📅"},
+        ].map((s,i)=><div key={i} style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:10,padding:"16px 18px"}}>
+          <div style={{fontSize:20,marginBottom:7}}>{s.e}</div>
+          <div style={{fontSize:10,color:"#78716c",fontWeight:700,marginBottom:4}}>{s.l}</div>
+          <div style={{fontSize:s.big?20:26,fontWeight:800,color:s.c}}>{s.v}</div>
+        </div>)}
+      </div>}
+    </>}
+    {tab==="log"&&<div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:12,padding:"14px 16px"}}>
+      <SH title="Activity Log" badge={log.length} action={fetchL} al="Refresh"/>
+      {loading?[1,2,3].map(i=><div key={i} style={{padding:"10px 0",borderBottom:"1px solid #fafaf9"}}><Skel h={13}/></div>):
+      log.length===0?<div style={{textAlign:"center",padding:"28px",color:"#a8a29e",fontSize:12}}>No activity found.</div>:
+      log.map((l,i)=><div key={i} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:"1px solid #fafaf9",alignItems:"flex-start"}}>
+        <div style={{width:28,height:28,borderRadius:"50%",background:B.priL,color:B.pri,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,flexShrink:0}}>{INI(l.username)}</div>
+        <div style={{flex:1,minWidth:0}}><div style={{fontSize:12,color:"#1c1917",fontWeight:600}}>{l.description||l.activity_type}</div><div style={{fontSize:10,color:"#a8a29e",marginTop:1}}>{l.username} · {l.timestamp}</div></div>
+        <span style={{fontSize:9,fontWeight:800,padding:"2px 7px",borderRadius:20,background:B.priL,color:B.priD,border:`1px solid ${B.priM}`,whiteSpace:"nowrap",flexShrink:0}}>{l.activity_type}</span>
+      </div>)}
+    </div>}
+  </Pg>;
+}
+
+/* ══════════════════════════════════════ SETTINGS ═══ */
+function Settings({api,user,toast,onLogout}){
+  const[oldP,setOldP]=useState("");const[newP,setNewP]=useState("");const[confP,setConfP]=useState("");const[saving,setSaving]=useState(false);
+  const[staff,setStaff]=useState([]);
+  useEffect(()=>{if(user.role==="admin")api.staffList().then(setStaff).catch(()=>{});},[]);
+  const changePass=async()=>{
+    if(!oldP||!newP){toast("Passwords enter చేయండి","error");return;}
+    if(newP!==confP){toast("Passwords match కావడం లేదు","error");return;}
+    if(newP.length<6){toast("Minimum 6 characters","error");return;}
+    setSaving(true);try{await api.changePassword(oldP,newP);toast("Password changed!");setOldP("");setNewP("");setConfP("");}catch(e){toast(e.message,"error");}finally{setSaving(false);}
+  };
+  return<Pg>
+    <h2 style={{fontSize:19,fontWeight:800,color:"#1c1917",margin:"0 0 20px"}}>Settings</h2>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+      <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:12,padding:"18px 20px"}}>
+        <SH title="My Profile"/>
+        <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
+          <div style={{width:52,height:52,borderRadius:"50%",background:`linear-gradient(135deg,${B.pri},${B.priD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,fontWeight:800,color:"#fff"}}>{INI(user.username)}</div>
+          <div><div style={{fontSize:15,fontWeight:800,color:"#1c1917"}}>{user.username}</div><div style={{fontSize:12,color:"#78716c",marginTop:1}}>Role: <strong style={{color:B.pri,textTransform:"capitalize"}}>{user.role}</strong></div><div style={{fontSize:10,color:"#a8a29e"}}>User ID: #{user.id}</div></div>
+        </div>
+        <button onClick={onLogout} style={{...BTN("danger"),width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>🚪 Logout</button>
+      </div>
+      <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:12,padding:"18px 20px"}}>
+        <SH title="Change Password"/>
+        <Fld label="Current Password"><input type="password" value={oldP} onChange={e=>setOldP(e.target.value)} style={INP} placeholder="Current password"/></Fld>
+        <Fld label="New Password"><input type="password" value={newP} onChange={e=>setNewP(e.target.value)} style={INP} placeholder="Min 6 characters"/></Fld>
+        <Fld label="Confirm Password"><input type="password" value={confP} onChange={e=>setConfP(e.target.value)} style={INP} placeholder="Repeat password"/></Fld>
+        <button onClick={changePass} disabled={saving} style={{...BTN(),width:"100%"}}>{saving?<Spin/>:"Update Password"}</button>
+      </div>
+      <div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:12,padding:"18px 20px"}}>
+        <SH title="About KPR Lab CRM"/>
+        <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
+          <div style={{width:44,height:44,borderRadius:10,background:`linear-gradient(135deg,${B.pri},${B.priD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>📷</div>
+          <div><div style={{fontSize:14,fontWeight:800,color:"#1c1917"}}>KPR Colour Lab CRM</div><div style={{fontSize:11,color:"#78716c"}}>Version 1.0.0</div></div>
+        </div>
+        {[["Developer","SEKHAR KAMMAMPATI"],["Copyright","© 2023–2025 KPR Colour Lab"],["Backend","Python · FastAPI · SQLite"],["Frontend","React · Standalone HTML"]].map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:"1px solid #fafaf9",fontSize:12}}><span style={{color:"#78716c",fontWeight:600}}>{k}</span><span style={{color:"#1c1917",fontWeight:500}}>{v}</span></div>)}
+      </div>
+      {user.role==="admin"&&staff.length>0&&<div style={{background:"#fff",border:"1px solid #e7e5e4",borderRadius:12,padding:"18px 20px"}}>
+        <SH title="Staff Members" badge={staff.length}/>
+        <div style={{display:"flex",flexDirection:"column",gap:7}}>
+          {staff.map((s,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",background:"#fafaf9",borderRadius:8}}>
+            <div style={{width:28,height:28,borderRadius:"50%",background:`linear-gradient(135deg,${B.pri},${B.priD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",flexShrink:0}}>{INI(s.username||s.name)}</div>
+            <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700,color:"#1c1917"}}>{s.username||s.name}</div><div style={{fontSize:10,color:"#78716c",textTransform:"capitalize"}}>{s.role}</div></div>
+            <span style={{fontSize:9,fontWeight:800,padding:"2px 7px",borderRadius:20,background:s.is_active?"#f0fdf4":"#fef2f2",color:s.is_active?"#15803d":"#dc2626",border:`1px solid ${s.is_active?"#86efac":"#fca5a5"}`}}>{s.is_active?"Active":"Inactive"}</span>
+          </div>)}
+        </div>
+      </div>}
+    </div>
+  </Pg>;
+}
+
+/* ══════════════════════════════════════════ NAV ═══ */
+const ALL_NAV=[
+  {id:"dashboard",l:"Dashboard",e:"⊞",roles:["admin","staff","sub_staff"]},
+  {id:"customers",l:"Customers",e:"👥",roles:["admin","staff"]},
+  {id:"jobs",l:"Jobs",e:"📋",roles:["admin","staff","sub_staff"]},
+  {id:"payments",l:"Payments",e:"💳",roles:["admin","staff"]},
+  {id:"inventory",l:"Inventory",e:"📦",roles:["admin"]},
+  {id:"reports",l:"Reports",e:"📊",roles:["admin"]},
+  {id:"settings",l:"Settings",e:"⚙",roles:["admin"]},
+];
+const getNav=(role)=>ALL_NAV.filter(n=>n.roles.includes(role||"sub_staff"));
+const canAccess=(role,navId)=>getNav(role).some(n=>n.id===navId);
+
+/* ═══════════════════════════════════════ ROOT APP ═══ */
+function App(){
+  const[sip,setSip]=useState("https://kpr-crm-api.onrender.com");const[sport,setSport]=useState("");
+  const[token,setToken]=useState(null);const[user,setUser]=useState(null);const[api,setApi]=useState(null);
+  const[nav,setNav]=useState("dashboard");const[col,setCol]=useState(false);
+  const[cfg,setCfg]=useState(false);const[toast,setToast]=useState(null);
+  const[notifs,setNotifs]=useState([]);const[notifOpen,setNotifOpen]=useState(false);
+  const notifRef=useRef(null);
+  const serverUrl=(()=>{
+    const s=sip.trim();
+    if(s.startsWith("http://")||s.startsWith("https://"))return s.replace(/\/$/, "");
+    if(sport)return `http://${s}:${sport}`;
+    return `http://${s}`;
+  })();
+  useEffect(()=>{const h=e=>{if(notifRef.current&&!notifRef.current.contains(e.target))setNotifOpen(false);};document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[]);
+  const showToast=(msg,type="success")=>setToast({msg,type,id:Date.now()});
+  const handleLogin=(res,apiInst)=>{
+    apiInst.setToken(res.access_token);setApi(apiInst);
+    setToken(res.access_token);setUser({id:res.user_id,username:res.username,role:res.role});
+    apiInst.notifications(res.user_id).then(setNotifs).catch(()=>{});
+  };
+  const handleLogout=()=>{if(api)api.logout().catch(()=>{});setToken(null);setUser(null);setApi(null);setNav("dashboard");};
+  const unread=notifs.filter(n=>!n.is_read).length;
+  const renderPage=()=>{
+    const p={api,user,role:user?.role,toast:showToast};
+    const role=user?.role;
+    // Unauthorized access → redirect to dashboard
+    if(nav!=="dashboard"&&!canAccess(role,nav)){
+      return<div style={{padding:"40px",textAlign:"center"}}>
+        <div style={{fontSize:36,marginBottom:12}}>🚫</div>
+        <div style={{fontSize:16,fontWeight:800,color:"#1c1917",marginBottom:6}}>Access Denied</div>
+        <div style={{fontSize:12,color:"#78716c",marginBottom:20}}>మీ role కి ఈ page access లేదు.</div>
+        <button onClick={()=>setNav("dashboard")} style={{...BTN(),padding:"9px 20px"}}>← Dashboard కి వెళ్ళు</button>
+      </div>;
+    }
+    switch(nav){
+      case"customers":return<Customers {...p}/>;
+      case"jobs":return<Jobs {...p}/>;
+      case"payments":return<Payments {...p}/>;
+      case"material_usage":return<MaterialUsage {...p}/>;
+      case"inventory":return<Inventory {...p}/>;
+      case"reports":return<Reports {...p}/>;
+      case"settings":return<Settings {...p} onLogout={handleLogout}/>;
+      default:return<Dashboard api={api} user={user} setNav={setNav} role={role}/>;
+    }
+  };
+
+  if(!token)return<>{cfg&&<CfgModal ip={sip} port={sport} onSave={(i,p)=>{setSip(i);setSport(p);setCfg(false);}} onClose={()=>setCfg(false)}/>}<Login onLogin={handleLogin} serverUrl={serverUrl} onConfig={()=>setCfg(true)}/></>;
+
+  return<>
+    {cfg&&<CfgModal ip={sip} port={sport} onSave={(i,p)=>{setSip(i);setSport(p);setCfg(false);setToken(null);setUser(null);setApi(null);}} onClose={()=>setCfg(false)}/>}
+    {toast&&<Toast key={toast.id} msg={toast.msg} type={toast.type} onDone={()=>setToast(null)}/>}
+    <div style={{display:"flex",height:"100vh",background:"#fafaf9",overflow:"hidden"}}>
+      {/* Sidebar — hidden on mobile, bottom nav shows instead */}
+      <aside style={{width:col?52:206,background:B.side,display:"flex",flexDirection:"column",flexShrink:0,transition:"width .22s ease",overflow:"hidden",zIndex:20,position:"relative"}}
+        className={window.innerWidth<=768?"mob-hide":""}>
+        <div style={{padding:col?"14px 0":"14px 15px",borderBottom:"1px solid #292524",display:"flex",alignItems:"center",gap:8,cursor:"pointer",justifyContent:col?"center":"flex-start"}} onClick={()=>setCol(v=>!v)}>
+          <div style={{width:30,height:30,borderRadius:7,flexShrink:0,background:`linear-gradient(135deg,${B.pri},${B.priD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📷</div>
+          {!col&&<div><div style={{fontSize:11,fontWeight:800,color:"#fff"}}>KPR Colour Lab</div><div style={{fontSize:9,color:B.sideMut,letterSpacing:".04em",fontWeight:600}}>CRM SYSTEM</div></div>}
+        </div>
+        <nav style={{flex:1,padding:"8px 0",overflowY:"auto"}}>
+          {getNav(user?.role).map(item=>{const active=nav===item.id;return(
+            <button key={item.id} onClick={()=>setNav(item.id)}
+              style={{display:"flex",alignItems:"center",gap:9,width:"100%",padding:col?"10px 0":"9px 14px",justifyContent:col?"center":"flex-start",background:active?B.sideA:"transparent",border:"none",borderLeft:active?`3px solid ${B.pri}`:"3px solid transparent",color:active?"#fff":B.sideMut,cursor:"pointer",fontSize:12,fontWeight:active?700:400,transition:"all .12s",textAlign:"left"}}
+              onMouseEnter={e=>{if(!active)e.currentTarget.style.background="#231f1e";}}
+              onMouseLeave={e=>{if(!active)e.currentTarget.style.background="transparent";}}>
+              <span style={{fontSize:14}}>{item.e}</span>{!col&&item.l}
+            </button>);})}
+        </nav>
+        <div style={{padding:col?"10px 0":"10px 12px",borderTop:"1px solid #292524",display:"flex",alignItems:"center",gap:8,justifyContent:col?"center":"flex-start"}}>
+          <div style={{width:28,height:28,borderRadius:"50%",flexShrink:0,background:`linear-gradient(135deg,${B.pri},${B.priD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:"#fff"}}>{INI(user?.username)}</div>
+          {!col&&<><div style={{flex:1,minWidth:0}}><div style={{fontSize:12,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user?.username}</div></div>
+          <button onClick={handleLogout} title="Logout" style={{background:"none",border:"none",cursor:"pointer",color:B.sideMut,fontSize:13,padding:2,flexShrink:0}} onMouseEnter={e=>e.currentTarget.style.color="#ef4444"} onMouseLeave={e=>e.currentTarget.style.color=B.sideMut}>🚪</button></>}
+        </div>
+      </aside>
+
+      {/* Main */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0,paddingBottom:window.innerWidth<=768?56:0}}>
+        <header style={{height:48,background:"#fff",borderBottom:"1px solid #e7e5e4",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 12px",flexShrink:0,gap:8,zIndex:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <button onClick={()=>setCol(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",color:"#78716c",fontSize:18,lineHeight:1}}>☰</button>
+            <span style={{fontSize:10,color:"#a8a29e",fontWeight:500}}>KPR Lab</span>
+            <span style={{color:"#d6d3d1"}}>/</span>
+            <span style={{fontSize:11,fontWeight:800,color:"#1c1917",textTransform:"capitalize"}}>{ALL_NAV.find(n=>n.id===nav)?.l||nav}</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:7}}>
+            {/* Notifications */}
+            <div ref={notifRef} style={{position:"relative"}}>
+              <button onClick={()=>setNotifOpen(v=>!v)} style={{position:"relative",background:"none",border:"1px solid #e7e5e4",borderRadius:7,padding:"5px 9px",cursor:"pointer",color:"#78716c",fontSize:14}}>
+                🔔
+                {unread>0&&<span style={{position:"absolute",top:-3,right:-3,background:"#ef4444",color:"#fff",borderRadius:"50%",width:14,height:14,fontSize:8,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #fff"}}>{unread}</span>}
+              </button>
+              {notifOpen&&<div style={{position:"absolute",top:"calc(100% + 7px)",right:0,width:310,background:"#fff",border:"1px solid #e7e5e4",borderRadius:12,boxShadow:"0 8px 28px rgba(0,0,0,.1)",zIndex:200,overflow:"hidden"}}>
+                <div style={{padding:"10px 14px",borderBottom:"1px solid #f5f5f4",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:12,fontWeight:800,color:"#1c1917"}}>Notifications</span>
+                  <button onClick={()=>{if(user?.id)api.markAllRead(user.id).then(()=>setNotifs(n=>n.map(x=>({...x,is_read:1})))).catch(()=>{});}} style={{fontSize:10,color:B.pri,fontWeight:600,background:"none",border:"none",cursor:"pointer"}}>Mark all read</button>
+                </div>
+                {notifs.length===0?<div style={{padding:"20px 14px",textAlign:"center",color:"#a8a29e",fontSize:12}}>No notifications</div>:
+                notifs.slice(0,8).map(n=><div key={n.id} style={{padding:"9px 14px",background:n.is_read?"transparent":"#fff7ed",borderBottom:"1px solid #f5f5f4"}}>
+                  <p style={{margin:0,fontSize:11,color:"#1c1917",fontWeight:n.is_read?400:600}}>{n.message||n.title||"Notification"}</p>
+                  <span style={{fontSize:10,color:"#a8a29e"}}>{(n.created_at||"").slice(0,16)}</span>
+                </div>)}
+              </div>}
+            </div>
+            <button onClick={()=>setCfg(true)} style={{background:"none",border:"1px solid #e7e5e4",borderRadius:7,padding:"5px 9px",cursor:"pointer",color:"#78716c",fontSize:14}} title="Server Config">📡</button>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+            {window.innerWidth<=768&&<button onClick={handleLogout} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"6px 10px",fontSize:11,fontWeight:700,color:"#dc2626",cursor:"pointer"}}>🚪 Logout</button>}
+            <div style={{width:30,height:30,borderRadius:"50%",background:`linear-gradient(135deg,${B.pri},${B.priD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",cursor:"pointer"}} title={user?.username}>{INI(user?.username)}</div>
+          </div>
+          </div>
+        </header>
+        <main style={{flex:1,overflowY:"auto"}}>{renderPage()}</main>
+      </div>
+    </div>
+    <BottomNav nav={nav} setNav={setNav} user={user} unread={unread}/>
+  </>;
+}
+
+/* ── PWA INSTALL PROMPT ── */
+function InstallBanner(){
+  const[prompt,setPrompt]=useState(null);const[shown,setShown]=useState(false);
+  useEffect(()=>{
+    const handler=e=>{e.preventDefault();setPrompt(e);setShown(true);};
+    window.addEventListener("beforeinstallprompt",handler);
+    return()=>window.removeEventListener("beforeinstallprompt",handler);
+  },[]);
+  if(!shown||!prompt)return null;
+  const install=async()=>{prompt.prompt();const r=await prompt.userChoice;if(r.outcome==="accepted")setShown(false);};
+  return<div style={{position:"fixed",top:0,left:0,right:0,background:`linear-gradient(135deg,${B.pri},${B.priD})`,color:"#fff",padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",zIndex:9999,boxShadow:"0 2px 12px rgba(0,0,0,.2)"}}>
+    <div style={{fontSize:12,fontWeight:600}}>📱 App గా Install చేయండి!</div>
+    <div style={{display:"flex",gap:8}}>
+      <button onClick={install} style={{background:"#fff",color:B.pri,border:"none",borderRadius:6,padding:"6px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>Install</button>
+      <button onClick={()=>setShown(false)} style={{background:"rgba(255,255,255,.2)",color:"#fff",border:"none",borderRadius:6,padding:"6px 10px",fontSize:11,cursor:"pointer"}}>✕</button>
+    </div>
+  </div>;
+}
+
+/* ── MOBILE BOTTOM NAV ── */
+function BottomNav({nav,setNav,user,unread}){
+  if(window.innerWidth>768)return null;
+  const items=getNav(user?.role).slice(0,5);
+  return<div style={{position:"fixed",bottom:0,left:0,right:0,height:56,background:B.side,display:"flex",alignItems:"stretch",zIndex:100,borderTop:"1px solid #292524",boxShadow:"0 -4px 16px rgba(0,0,0,.2)"}}>
+    {items.map(item=>{const active=nav===item.id;return(
+      <button key={item.id} onClick={()=>setNav(item.id)}
+        style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,background:active?B.sideA:"transparent",border:"none",borderTop:active?`2px solid ${B.pri}`:"2px solid transparent",color:active?"#fff":B.sideMut,cursor:"pointer",position:"relative",padding:"6px 0"}}>
+        <span style={{fontSize:16,lineHeight:1}}>{item.e}</span>
+        <span style={{fontSize:8,fontWeight:active?700:500,letterSpacing:".02em"}}>{item.l}</span>
+        {item.id==="dashboard"&&unread>0&&<span style={{position:"absolute",top:4,right:"calc(50% - 14px)",background:"#ef4444",color:"#fff",borderRadius:"50%",width:14,height:14,fontSize:8,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{unread}</span>}
+      </button>);})}
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
